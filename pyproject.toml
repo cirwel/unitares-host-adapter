@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unitares-host-adapter"
+version = "0.1.0"
+description = "Thin client bindings that mount UNITARES governance into agent hosts (Hermes, Claude Code, Goose, ...)"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "Kenny Wang", email = "hikewa@gmail.com" },
+]
+requires-python = ">=3.12"
+keywords = ["unitares", "governance", "mcp", "agent", "hermes", "claude-code", "goose"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "mcp>=1.26.0,<2.0.0",
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+hermes = []
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+]
+
+[project.scripts]
+uhaa = "unitares_host_adapter.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/CIRWEL/unitares-host-adapter"
+Spec = "https://github.com/CIRWEL/unitares-host-adapter/blob/master/SPEC.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
