@@ -7,7 +7,7 @@ name = "unitares-host-adapter"
 version = "0.1.0"
 description = "Thin client bindings that mount UNITARES governance into agent hosts (Hermes, Claude Code, Goose, ...)"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [
     { name = "Kenny Wang", email = "hikewa@gmail.com" },
 ]
@@ -15,7 +15,7 @@ requires-python = ">=3.12"
 keywords = ["unitares", "governance", "mcp", "agent", "hermes", "claude-code", "goose"]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
