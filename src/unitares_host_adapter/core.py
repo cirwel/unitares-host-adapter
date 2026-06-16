@@ -76,15 +76,17 @@ class UnitaresAdapter:
         *,
         response_mode: ResponseMode = "auto",
         confidence: Optional[float] = None,
+        complexity: float = 0.3,
     ) -> Verdict:
         """Mode 1: Explicit delivery. Agent initiates a check-in."""
         arguments: dict[str, Any] = {
-            "purpose": purpose,
-            "response_mode": response_mode,
+            "response_text": purpose,
+            "complexity": complexity,
+            **_mode_args(response_mode),
         }
         if confidence is not None:
             arguments["confidence"] = confidence
-        raw = await self._transport.call_tool("checkin", self._bind(arguments))
+        raw = await self._transport.call_tool("process_agent_update", self._bind(arguments))
         return self._verdict_from_raw(raw)
 
     async def gate(
@@ -96,13 +98,20 @@ class UnitaresAdapter:
 
         Intended for host pre_tool_call hooks. The caller converts the returned
         BlockDirective to the host's native block shape (e.g. as_dict() for Hermes).
+
+        NOTE: this issues a real check-in (process_agent_update) per gated call,
+        because the proceed/pause verdict is only produced by that tool — the
+        read-only get_governance_metrics returns EISV/risk but no verdict. The
+        tool context is folded into response_text (the server has no
+        tool_context parameter). Low complexity keeps these synthetic check-ins
+        from inflating the agent's state.
         """
         raw = await self._transport.call_tool(
-            "checkin",
+            "process_agent_update",
             self._bind({
-                "purpose": f"gate:{tool_name}",
+                "response_text": f"gate:{tool_name} args={_preview(args)}",
+                "complexity": 0.1,
                 "response_mode": "minimal",
-                "tool_context": {"tool_name": tool_name, "args": args},
             }),
         )
         verdict = self._verdict_from_raw(raw)
@@ -120,13 +129,17 @@ class UnitaresAdapter:
         *,
         response_mode: ResponseMode = "lite",
     ) -> AnnotatedResult:
-        """Mode 2: Ambient delivery. Annotate a tool result with proprioceptive state."""
+        """Mode 2: Ambient delivery. Annotate a tool result with proprioceptive state.
+
+        Like gate(), this issues a low-complexity check-in (the only verdict
+        source) with the tool context folded into response_text.
+        """
         raw = await self._transport.call_tool(
-            "checkin",
+            "process_agent_update",
             self._bind({
-                "purpose": f"ambient:{tool_name}",
-                "response_mode": response_mode,
-                "tool_context": {"tool_name": tool_name, "args_preview": _preview(args)},
+                "response_text": f"ambient:{tool_name} args={_preview(args)}",
+                "complexity": 0.1,
+                **_mode_args(response_mode),
             }),
         )
         verdict = self._verdict_from_raw(raw)
@@ -140,25 +153,54 @@ class UnitaresAdapter:
         success: bool,
         details: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Feed calibration ground truth after a tool call completes."""
+        """Feed calibration ground truth after a tool call completes.
+
+        The server keys outcomes on a required ``outcome_type`` enum, not a
+        success bool. A generic per-tool result maps to task_completed /
+        task_failed; the tool name and any caller metadata go in ``detail``
+        (singular — the server has no ``details`` parameter)."""
         await self._transport.call_tool(
             "outcome_event",
             self._bind({
-                "tool_name": tool_name,
-                "success": success,
-                "details": details or {},
+                "outcome_type": "task_completed" if success else "task_failed",
+                "detail": {"tool_name": tool_name, **(details or {})},
             }),
         )
 
     @staticmethod
     def _verdict_from_raw(raw: dict[str, Any]) -> Verdict:
-        action = raw.get("action") or raw.get("verdict") or "proceed"
+        # process_agent_update returns verdict as a dict: {"value": "proceed",
+        # "meaning": ..., "next_action": ...}, with margin at the top level.
+        # Fall back to a bare string / top-level action for other shapes.
+        verdict = raw.get("verdict")
+        if isinstance(verdict, dict):
+            action = verdict.get("value") or verdict.get("action") or "proceed"
+            message = (
+                verdict.get("meaning")
+                or verdict.get("next_action")
+                or raw.get("guidance")
+                or raw.get("message")
+                or ""
+            )
+            margin = raw.get("margin") or verdict.get("margin")
+        else:
+            action = (verdict if isinstance(verdict, str) else None) or raw.get("action") or "proceed"
+            message = raw.get("message") or raw.get("guidance") or ""
+            margin = raw.get("margin")
         return Verdict(
             action=action,  # type: ignore[arg-type]
-            message=raw.get("message") or raw.get("guidance") or "",
-            margin=raw.get("margin"),
+            message=message,
+            margin=margin,
             raw=raw,
         )
+
+
+def _mode_args(mode: "ResponseMode") -> dict[str, str]:
+    """Map the adapter's ResponseMode onto process_agent_update's vocabulary.
+
+    The server accepts response_mode in {minimal, compact, standard, full,
+    mirror, auto}; the adapter's "lite" is its alias for "minimal"."""
+    return {"response_mode": "minimal" if mode == "lite" else mode}
 
 
 def _find(obj: Any, key: str) -> Optional[str]:
