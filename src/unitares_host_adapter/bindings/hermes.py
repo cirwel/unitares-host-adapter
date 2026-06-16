@@ -1,105 +1,315 @@
 """Hermes Agent binding.
 
-Wires the UnitaresAdapter onto Hermes's plugin hook surface. Hermes exposes
-register_hook(name, callback) with the following hook names relevant here:
+Hermes plugin callbacks are synchronous: ``hermes_cli.plugins.invoke_hook`` calls
+callbacks directly and does not await coroutine returns. This binding therefore
+registers synchronous hook functions that drive the async ``UnitaresAdapter``
+behind the scenes.
 
-    pre_tool_call          -> gated mode (returns {"action": "block", ...} or None)
-    post_tool_call         -> outcome_event (calibration feed)
-    transform_tool_result  -> ambient annotation
-    on_session_start       -> onboard
-    on_session_end         -> session close
+Default mode is deliberately light:
 
-Mode coverage: full (explicit via MCP tool call + ambient + gated).
+* ``pre_llm_call`` lazily onboards the current Hermes session.
+* ``post_llm_call`` emits one turn-level check-in.
+* per-tool gated, ambient, and outcome hooks are opt-in because they can create
+  high-frequency governance traffic.
 
-Usage in a Hermes plugin:
+Usage in a Hermes plugin::
+
+    # ~/.hermes/plugins/unitares/plugin.yaml
+    # name: unitares
+    # provides_hooks: [pre_llm_call, post_llm_call]
 
     # ~/.hermes/plugins/unitares/__init__.py
-    from unitares_host_adapter.bindings.hermes import register
+    from unitares_host_adapter.bindings.hermes import register as register_unitares
 
-    def setup(ctx):
-        register(ctx)  # reads UNITARES_MCP_URL and UNITARES_BEARER from env
+    def register(ctx):
+        register_unitares(ctx)  # reads UNITARES_MCP_URL / UNITARES_BEARER from env
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+import asyncio
+import json
+import threading
+from typing import Any, Callable, Optional
 
 from unitares_host_adapter.core import UnitaresAdapter
 
-# Module-level singleton. Hermes instantiates one plugin per session; we keep
-# one adapter instance and let it manage the session_id.
-_adapter: Optional[UnitaresAdapter] = None
+# Adapter most recently touched by a hook. Returned from register() for backward
+# compatibility with early smoke tests; production state is kept per session in
+# _adapters.
+_adapter: Any = None
+_adapters: dict[str, Any] = {}
+
+_HOOK_TIMEOUT_SECONDS = 30.0
+_RESPONSE_EXCERPT_CHARS = 240
+
+
+class _PerCallStreamableHTTPTransport:
+    """Hermes-safe transport wrapper.
+
+    The base StreamableHTTPTransport keeps an MCP session open across calls and
+    must open/close its anyio task group from the same task. Hermes hooks are
+    sync callbacks, so a naive ``asyncio.run`` per hook would reuse that session
+    across different event loops/tasks. This wrapper opens a fresh MCP session
+    for each governance call and closes it inside the same coroutine task.
+
+    The UNITARES ``client_session_id`` still persists in ``UnitaresAdapter`` and
+    is echoed into later calls, so governance attribution remains continuous
+    even though the HTTP MCP transport session is per-call.
+    """
+
+    def __init__(
+        self,
+        mcp_url: str,
+        *,
+        bearer: Optional[str] = None,
+        connect_timeout: float = 10.0,
+        call_timeout: float = 30.0,
+    ) -> None:
+        self.mcp_url = mcp_url
+        self._bearer = bearer
+        self.connect_timeout = connect_timeout
+        self.call_timeout = call_timeout
+
+    @classmethod
+    def from_env(cls) -> "_PerCallStreamableHTTPTransport":
+        from unitares_host_adapter.transport import DEFAULT_MCP_URL
+        import os
+
+        return cls(
+            os.environ.get("UNITARES_MCP_URL", DEFAULT_MCP_URL),
+            bearer=os.environ.get("UNITARES_BEARER"),
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        from unitares_host_adapter.transport import StreamableHTTPTransport
+
+        async with StreamableHTTPTransport(
+            self.mcp_url,
+            bearer=self._bearer,
+            connect_timeout=self.connect_timeout,
+            call_timeout=self.call_timeout,
+        ) as transport:
+            return await transport.call_tool(name, arguments)
+
+
+def _run(awaitable: Any) -> Any:
+    """Resolve an awaitable from Hermes's synchronous hook surface.
+
+    If no loop is running, use ``asyncio.run``. If a future Hermes call site
+    invokes hooks from inside an active loop, run the coroutine in a helper
+    thread with its own loop so the hook still returns a concrete value.
+    """
+    if not inspect_awaitable(awaitable):
+        return awaitable
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+
+    outcome: dict[str, Any] = {}
+    failure: dict[str, BaseException] = {}
+    done = threading.Event()
+
+    def _runner() -> None:
+        try:
+            outcome["value"] = asyncio.run(awaitable)
+        except BaseException as exc:  # pragma: no cover - re-raised below
+            failure["exc"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=_runner, name="unitares-hermes-hook-await", daemon=True)
+    thread.start()
+    if not done.wait(timeout=_HOOK_TIMEOUT_SECONDS):
+        raise TimeoutError(
+            "UNITARES Hermes hook did not complete within "
+            f"{_HOOK_TIMEOUT_SECONDS:.0f}s"
+        )
+    if "exc" in failure:
+        raise failure["exc"]
+    return outcome.get("value")
+
+
+def inspect_awaitable(value: Any) -> bool:
+    """Tiny indirection for tests/type clarity without importing inspect hot."""
+    import inspect
+
+    return inspect.isawaitable(value)
+
+
+def _session_key(kwargs: dict[str, Any]) -> str:
+    """Stable host key for a Hermes hook callback.
+
+    Turn hooks provide session_id; tool hooks may only provide task_id in some
+    Hermes versions/call sites, so fall back to task_id rather than dropping
+    opt-in governance coverage entirely.
+    """
+    return str(kwargs.get("session_id") or kwargs.get("task_id") or "")
+
+
+def _tool_success(kwargs: dict[str, Any]) -> bool:
+    """Infer whether a Hermes post_tool_call result succeeded."""
+    status = kwargs.get("status")
+    if status is not None:
+        return str(status) == "ok"
+
+    result = kwargs.get("result")
+    if isinstance(result, str):
+        try:
+            parsed = json.loads(result)
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict):
+            if parsed.get("error"):
+                return False
+            if parsed.get("success") is False:
+                return False
+    return True
 
 
 def register(
     ctx: Any,
     *,
-    adapter: Optional[UnitaresAdapter] = None,
-    enable_gate: bool = True,
-    enable_ambient: bool = True,
-) -> UnitaresAdapter:
+    adapter: Optional[Any] = None,
+    adapter_factory: Optional[Callable[[], Any]] = None,
+    enable_gate: bool = False,
+    enable_ambient: bool = False,
+    enable_outcomes: bool = False,
+    enable_turn_checkin: bool = True,
+) -> Any:
     """Register UNITARES governance hooks with a Hermes plugin context.
 
-    Pass an explicit adapter to wire to a custom transport; otherwise the
-    binding looks for UNITARES_MCP_URL / UNITARES_BEARER in the environment
-    and constructs a default transport. (Transport construction is deferred
-    to the 0.2 milestone — this 0.1 release exposes the wiring shape.)
+    Defaults restore the missing automatic behavior without flooding the server:
+    one lazy onboard at the first Hermes turn, then one check-in per completed
+    assistant turn. Per-tool gate/ambient/outcome modes are available but opt-in.
     """
-    global _adapter
-    _adapter = adapter or _build_default_adapter()
+    global _adapter, _adapters
+    _adapters = {}
+    if adapter is not None:
+        factory: Callable[[], Any] = lambda: adapter
+        _adapter = adapter
+    else:
+        factory = adapter_factory or _build_default_adapter
+        _adapter = None
 
-    async def pre_tool_call(**kwargs: Any) -> Optional[dict[str, str]]:
+    def _adapter_for(session_id: str) -> Any:
+        global _adapter
+        if session_id not in _adapters:
+            _adapters[session_id] = factory()
+        _adapter = _adapters[session_id]
+        return _adapter
+
+    def _ensure_session(**kwargs: Any) -> Any:
+        session_id = _session_key(kwargs)
+        if not session_id:
+            return None
+        adapter_for_session = _adapter_for(session_id)
+        current = getattr(adapter_for_session, "session_id", None)
+        if current == session_id:
+            return adapter_for_session
+        platform = str(kwargs.get("platform") or "hermes")
+        model = str(kwargs.get("model") or "unknown-model")
+        purpose = f"hermes:{platform}:{model}"
+        _run(adapter_for_session.on_session_start(session_id, purpose=purpose))
+        return adapter_for_session
+
+    def pre_llm_call(**kwargs: Any) -> None:
+        _ensure_session(**kwargs)
+        return None
+
+    def post_llm_call(**kwargs: Any) -> None:
+        adapter_for_session = _ensure_session(**kwargs)
+        if adapter_for_session is None:
+            return None
+        if not enable_turn_checkin:
+            return None
+        response = str(kwargs.get("assistant_response") or "").strip().replace("\n", " ")
+        if not response:
+            response = "no assistant response text"
+        excerpt = response[:_RESPONSE_EXCERPT_CHARS]
+        _run(
+            adapter_for_session.checkin(
+                f"Turn completed: {excerpt}",
+                response_mode="minimal",
+                complexity=0.2,
+                confidence=0.7,
+            )
+        )
+        return None
+
+    def pre_tool_call(**kwargs: Any) -> Optional[dict[str, str]]:
         if not enable_gate:
+            return None
+        adapter_for_session = _ensure_session(**kwargs)
+        if adapter_for_session is None:
             return None
         tool_name = kwargs.get("tool_name", "")
         args = kwargs.get("args", {}) or {}
-        directive = await _adapter.gate(tool_name, args)
+        directive = _run(adapter_for_session.gate(tool_name, args))
         return directive.as_dict() if directive else None
 
-    async def post_tool_call(**kwargs: Any) -> None:
+    def post_tool_call(**kwargs: Any) -> None:
+        if not enable_outcomes:
+            return None
+        adapter_for_session = _ensure_session(**kwargs)
+        if adapter_for_session is None:
+            return None
         tool_name = kwargs.get("tool_name", "")
-        success = kwargs.get("success", True)
-        await _adapter.outcome_event(tool_name, success=success)
+        success = _tool_success(kwargs)
+        details = {
+            "status": kwargs.get("status") or ("ok" if success else "error"),
+            "error_type": kwargs.get("error_type") or "",
+            "error_message": kwargs.get("error_message") or "",
+        }
+        _run(adapter_for_session.outcome_event(tool_name, success=success, details=details))
+        return None
 
-    async def transform_tool_result(**kwargs: Any) -> Any:
+    def transform_tool_result(**kwargs: Any) -> Any:
         if not enable_ambient:
+            return kwargs.get("result")
+        adapter_for_session = _ensure_session(**kwargs)
+        if adapter_for_session is None:
             return kwargs.get("result")
         tool_name = kwargs.get("tool_name", "")
         args = kwargs.get("args", {}) or {}
         result = kwargs.get("result")
-        annotated = await _adapter.annotate(tool_name, args, result)
+        annotated = _run(adapter_for_session.annotate(tool_name, args, result))
         return annotated.render() if annotated.annotation else result
 
-    async def on_session_start(**kwargs: Any) -> None:
-        session_id = kwargs.get("session_id", "")
-        await _adapter.on_session_start(session_id, purpose="hermes")
+    def on_session_start(**kwargs: Any) -> None:
+        _ensure_session(**kwargs)
+        return None
 
-    async def on_session_end(**kwargs: Any) -> None:
-        session_id = kwargs.get("session_id", "")
-        await _adapter.on_session_end(session_id)
-        # Close the transport if it owns a connection (the default streamable
-        # transport does); injected/fake transports may not.
-        transport = getattr(_adapter, "_transport", None)
-        aclose = getattr(transport, "aclose", None)
-        if aclose is not None:
-            await aclose()
+    def _close_session(**kwargs: Any) -> None:
+        session_id = str(kwargs.get("session_id") or "")
+        if not session_id:
+            return None
+        adapter_for_session = _adapters.pop(session_id, None)
+        if adapter_for_session is not None:
+            _run(adapter_for_session.on_session_end(session_id))
+        return None
 
-    ctx.register_hook("pre_tool_call", pre_tool_call)
-    ctx.register_hook("post_tool_call", post_tool_call)
-    ctx.register_hook("transform_tool_result", transform_tool_result)
+    ctx.register_hook("pre_llm_call", pre_llm_call)
+    ctx.register_hook("post_llm_call", post_llm_call)
+    if enable_gate:
+        ctx.register_hook("pre_tool_call", pre_tool_call)
+    if enable_outcomes:
+        ctx.register_hook("post_tool_call", post_tool_call)
+    if enable_ambient:
+        ctx.register_hook("transform_tool_result", transform_tool_result)
     ctx.register_hook("on_session_start", on_session_start)
-    ctx.register_hook("on_session_end", on_session_end)
+    ctx.register_hook("on_session_finalize", _close_session)
+    ctx.register_hook("on_session_reset", _close_session)
 
     return _adapter
 
 
 def _build_default_adapter() -> UnitaresAdapter:
-    """Construct an adapter wired to the default streamable-HTTP transport.
-
-    Reads UNITARES_MCP_URL / UNITARES_BEARER from the environment. The
-    transport connects lazily on the first governance call (on_session_start),
-    so building the adapter performs no I/O.
-    """
-    from unitares_host_adapter.transport import StreamableHTTPTransport
-
-    return UnitaresAdapter(StreamableHTTPTransport.from_env())
+    """Construct an adapter wired to the Hermes-safe per-call transport."""
+    return UnitaresAdapter(
+        _PerCallStreamableHTTPTransport.from_env(),
+        agent_label="Hermes Agent",
+        model_type="hermes-agent",
+    )

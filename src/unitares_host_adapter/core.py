@@ -27,9 +27,16 @@ class UnitaresAdapter:
     For host-specific wiring, import from unitares_host_adapter.bindings.<host>.
     """
 
-    def __init__(self, transport: MCPTransport, *, agent_label: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        transport: MCPTransport,
+        *,
+        agent_label: Optional[str] = None,
+        model_type: str = "host-adapter",
+    ) -> None:
         self._transport = transport
         self._agent_label = agent_label
+        self._model_type = model_type
         self._session_id: Optional[str] = None
         # Governance-issued continuity proof, captured from onboard. Echoed on
         # every later call so the host's calls form ONE trajectory. Distinct
@@ -49,14 +56,16 @@ class UnitaresAdapter:
 
     async def on_session_start(self, session_id: str, *, purpose: str = "", **_: Any) -> None:
         """Mint governance identity for a new host session. Host-agnostic lifecycle entry point."""
-        self._session_id = session_id
         raw = await self._transport.call_tool(
             "onboard",
             {
-                "purpose": purpose or f"host-session:{session_id}",
+                "name": self._agent_label or f"host-session:{session_id}",
+                "model_type": self._model_type,
+                "client_hint": purpose or f"host-session:{session_id}",
                 "force_new": True,
             },
         )
+        self._session_id = session_id
         self._client_session_id = _find(raw, "client_session_id")
 
     async def on_session_end(self, session_id: str, **_: Any) -> None:

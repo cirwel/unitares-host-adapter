@@ -24,12 +24,36 @@ pip install unitares-host-adapter
 
 ### Hermes Agent
 
+Create a normal Hermes plugin directory and delegate to the host binding:
+
+```yaml
+# ~/.hermes/plugins/unitares/plugin.yaml
+name: unitares
+version: 0.2.0
+description: UNITARES governance lifecycle adapter for Hermes
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call
+```
+
 ```python
 # ~/.hermes/plugins/unitares/__init__.py
-from unitares_host_adapter.bindings.hermes import register
+from unitares_host_adapter.bindings.hermes import register as register_unitares
 
-def setup(ctx):
-    register(ctx, mcp_url="https://gov.cirwel.org/mcp/", bearer=os.environ["UNITARES_BEARER"])
+def register(ctx):
+    # Default: lazy onboard on the first turn, then one check-in per completed
+    # Hermes turn. Per-tool gate/ambient/outcome traffic stays opt-in.
+    register_unitares(ctx)
+```
+
+Set `UNITARES_MCP_URL=http://localhost:8767/mcp/` for a local governance server,
+or leave it unset to use the packaged default. Enable the plugin in Hermes config
+(`plugins.enabled: [unitares]`) and restart Hermes so plugin discovery reruns.
+
+Opt-in per-tool modes are available when you explicitly want them:
+
+```python
+register_unitares(ctx, enable_gate=True, enable_ambient=True, enable_outcomes=True)
 ```
 
 ### Claude Code
@@ -56,13 +80,15 @@ See [`SPEC.md`](./SPEC.md) for the full treatment.
 
 ## Status
 
-**v0.1 — alpha.** Signatures may change before 1.0.
+**v0.2 — alpha.** Signatures may change before 1.0.
 
 Bindings are landing in this order:
 
 - [x] Spec draft
 - [x] Core `UnitaresAdapter` class
-- [ ] Hermes binding
+- [x] Concrete streamable-HTTP MCP transport
+- [x] Hermes binding: lazy first-turn onboard + turn-level check-in
+- [x] Hermes opt-in gated / ambient / outcome hooks
 - [ ] Claude Code binding
 - [ ] Goose binding
 - [ ] Generic MCP fallback

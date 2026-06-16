@@ -33,6 +33,14 @@ class FakeTransport:
         return {}
 
 
+class FailingOnboardTransport(FakeTransport):
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((name, arguments))
+        if name == "onboard":
+            raise RuntimeError("onboard failed")
+        return await super().call_tool(name, arguments)
+
+
 @pytest.mark.asyncio
 async def test_checkin_returns_verdict_with_action():
     t = FakeTransport({"action": "guide", "message": "near boundary"})
@@ -94,14 +102,17 @@ async def test_annotate_carries_margin_and_guidance():
 
 
 @pytest.mark.asyncio
-async def test_on_session_start_calls_onboard():
+async def test_on_session_start_calls_onboard_with_real_identity_args():
     t = FakeTransport()
-    a = UnitaresAdapter(t)
+    a = UnitaresAdapter(t, agent_label="Hermes Test", model_type="hermes-test")
     await a.on_session_start("s-123", purpose="test")
     assert a.session_id == "s-123"
     assert t.calls[0][0] == "onboard"
     assert t.calls[0][1]["force_new"] is True
-    assert t.calls[0][1]["purpose"] == "test"
+    assert t.calls[0][1]["name"] == "Hermes Test"
+    assert t.calls[0][1]["model_type"] == "hermes-test"
+    assert t.calls[0][1]["client_hint"] == "test"
+    assert "purpose" not in t.calls[0][1]
 
 
 @pytest.mark.asyncio
@@ -139,6 +150,26 @@ async def test_no_client_session_id_echoed_before_onboard():
     a = UnitaresAdapter(t)
     await a.checkin("no session yet")
     assert "client_session_id" not in t.calls[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_session_start_does_not_rebind_or_reuse_stale_proof_on_onboard_failure():
+    t = FailingOnboardTransport()
+    a = UnitaresAdapter(t)
+    a._session_id = "old-session"
+    a._client_session_id = "old-csid"
+
+    with pytest.raises(RuntimeError, match="onboard failed"):
+        await a.on_session_start("new-session", purpose="retry-test")
+
+    assert a.session_id == "old-session"
+    assert a.client_session_id == "old-csid"
+
+    with pytest.raises(RuntimeError, match="onboard failed"):
+        await a.on_session_start("new-session", purpose="retry-test")
+
+    onboard_calls = [call for call in t.calls if call[0] == "onboard"]
+    assert len(onboard_calls) == 2
 
 
 @pytest.mark.asyncio

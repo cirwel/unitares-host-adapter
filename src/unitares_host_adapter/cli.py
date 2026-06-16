@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args[0] == "spec":
-        spec_path = Path(__file__).resolve().parent.parent.parent.parent / "SPEC.md"
+        spec_path = Path(__file__).resolve().parents[2] / "SPEC.md"
         print(spec_path if spec_path.exists() else "spec bundled with source distribution only")
         return 0
 

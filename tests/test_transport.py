@@ -75,14 +75,16 @@ def test_construction_does_no_io():
 
 # --- default-adapter wiring -------------------------------------------------
 
-def test_build_default_adapter_uses_streamable_transport(monkeypatch):
+def test_build_default_adapter_uses_per_call_streamable_transport(monkeypatch):
     from unitares_host_adapter.bindings import hermes
 
     monkeypatch.setenv("UNITARES_MCP_URL", "http://127.0.0.1:8767/mcp/")
     adapter = hermes._build_default_adapter()
     assert isinstance(adapter, UnitaresAdapter)
-    assert isinstance(adapter._transport, StreamableHTTPTransport)
-    assert adapter._transport.mcp_url == "http://127.0.0.1:8767/mcp/"
+    # Hermes hooks are synchronous, so the default binding uses a per-call
+    # wrapper instead of a long-lived StreamableHTTPTransport session.
+    assert adapter._transport.__class__.__name__ == "_PerCallStreamableHTTPTransport"
+    assert getattr(adapter._transport, "mcp_url") == "http://127.0.0.1:8767/mcp/"
 
 
 @pytest.mark.asyncio
