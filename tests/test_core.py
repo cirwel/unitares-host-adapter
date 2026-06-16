@@ -20,6 +20,8 @@ class FakeTransport:
         self.calls.append((name, arguments))
         if name == "checkin":
             return self._verdict
+        if name == "onboard":
+            return {"agent_uuid": "u-1", "client_session_id": "csid-1"}
         return {}
 
 
@@ -92,6 +94,53 @@ async def test_on_session_start_calls_onboard():
     assert t.calls[0][0] == "onboard"
     assert t.calls[0][1]["force_new"] is True
     assert t.calls[0][1]["purpose"] == "test"
+
+
+@pytest.mark.asyncio
+async def test_on_session_start_captures_client_session_id():
+    t = FakeTransport()
+    a = UnitaresAdapter(t)
+    assert a.client_session_id is None
+    await a.on_session_start("s-123")
+    # Captured from the onboard response, distinct from the host session id.
+    assert a.client_session_id == "csid-1"
+
+
+@pytest.mark.asyncio
+async def test_calls_echo_client_session_id_after_onboard():
+    # The strict-safety contract: every post-onboard call must carry the
+    # captured proof, or it resolves by transport fingerprint to a sibling.
+    t = FakeTransport({"action": "proceed"})
+    a = UnitaresAdapter(t)
+    await a.on_session_start("s-1")
+    await a.checkin("did work")
+    await a.gate("Bash", {"command": "ls"})
+    await a.annotate("Read", {}, "contents")
+    await a.outcome_event("Bash", success=True)
+    post_onboard = [args for name, args in t.calls if name != "onboard"]
+    assert post_onboard, "expected calls after onboard"
+    assert all(a.client_session_id == "csid-1" and args.get("client_session_id") == "csid-1"
+               for args in post_onboard)
+
+
+@pytest.mark.asyncio
+async def test_no_client_session_id_echoed_before_onboard():
+    # Without an onboard, there is no proof to echo — calls go out bare and the
+    # server applies its own (fingerprint) resolution; we do not fabricate one.
+    t = FakeTransport({"action": "proceed"})
+    a = UnitaresAdapter(t)
+    await a.checkin("no session yet")
+    assert "client_session_id" not in t.calls[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_session_end_clears_client_session_id():
+    t = FakeTransport()
+    a = UnitaresAdapter(t)
+    await a.on_session_start("s-1")
+    assert a.client_session_id == "csid-1"
+    await a.on_session_end("s-1")
+    assert a.client_session_id is None
 
 
 @pytest.mark.asyncio
