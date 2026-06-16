@@ -10,7 +10,11 @@ from unitares_host_adapter import UnitaresAdapter
 
 
 class FakeTransport:
-    """Minimal fake that records calls and returns canned verdicts."""
+    """Minimal fake that records calls and returns canned verdicts.
+
+    Tests pass a simple {"action", "message", "margin"} dict; the fake wraps it
+    in the real process_agent_update shape ({"verdict": {"value": ...}, ...}) so
+    the parser is exercised against the contract it sees in production."""
 
     def __init__(self, verdict: dict[str, Any] | None = None) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -18,8 +22,12 @@ class FakeTransport:
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((name, arguments))
-        if name == "checkin":
-            return self._verdict
+        if name == "process_agent_update":
+            v = self._verdict
+            return {
+                "verdict": {"value": v.get("action", "proceed"), "meaning": v.get("message", "")},
+                "margin": v.get("margin"),
+            }
         if name == "onboard":
             return {"agent_uuid": "u-1", "client_session_id": "csid-1"}
         return {}
@@ -148,9 +156,20 @@ async def test_outcome_event_feeds_calibration():
     t = FakeTransport()
     a = UnitaresAdapter(t)
     await a.outcome_event("Bash", success=True, details={"exit_code": 0})
-    assert t.calls[-1][0] == "outcome_event"
-    assert t.calls[-1][1]["success"] is True
-    assert t.calls[-1][1]["details"] == {"exit_code": 0}
+    name, args = t.calls[-1]
+    assert name == "outcome_event"
+    # Real contract: required outcome_type enum, detail (singular) carries metadata.
+    assert args["outcome_type"] == "task_completed"
+    assert args["detail"] == {"tool_name": "Bash", "exit_code": 0}
+    assert "success" not in args and "details" not in args
+
+
+@pytest.mark.asyncio
+async def test_outcome_event_failure_maps_to_task_failed():
+    t = FakeTransport()
+    a = UnitaresAdapter(t)
+    await a.outcome_event("Bash", success=False)
+    assert t.calls[-1][1]["outcome_type"] == "task_failed"
 
 
 @pytest.mark.asyncio
@@ -167,3 +186,52 @@ async def test_gate_uses_minimal_response_mode():
     a = UnitaresAdapter(t)
     await a.gate("Read", {})
     assert t.calls[-1][1]["response_mode"] == "minimal"
+
+
+# --- reconciled tool vocabulary (real governance contract) ------------------
+
+@pytest.mark.asyncio
+async def test_checkin_targets_process_agent_update_with_real_args():
+    # Not the fictional "checkin" tool, and purpose maps to response_text.
+    t = FakeTransport({"action": "proceed"})
+    a = UnitaresAdapter(t)
+    await a.checkin("did the thing", confidence=0.8)
+    name, args = t.calls[-1]
+    assert name == "process_agent_update"
+    assert args["response_text"] == "did the thing"
+    assert "complexity" in args and 0.0 <= args["complexity"] <= 1.0
+    assert args["confidence"] == 0.8
+    assert "purpose" not in args  # the fictional arg is gone
+
+
+@pytest.mark.asyncio
+async def test_verdict_parsed_from_verdict_value_shape():
+    # process_agent_update nests the action under verdict.value, margin at top.
+    t = FakeTransport({"action": "pause", "message": "high entropy", "margin": "tight"})
+    a = UnitaresAdapter(t)
+    v = await a.checkin("x")
+    assert v.action == "pause"
+    assert v.blocks
+    assert v.message == "high entropy"
+    assert v.margin == "tight"
+
+
+@pytest.mark.asyncio
+async def test_gate_folds_context_into_response_text_no_tool_context():
+    t = FakeTransport({"action": "proceed"})
+    a = UnitaresAdapter(t)
+    await a.gate("Bash", {"command": "ls"})
+    _, args = t.calls[-1]
+    assert "tool_context" not in args  # server has no such param
+    assert args["response_text"].startswith("gate:Bash")
+    assert args["complexity"] == 0.1  # synthetic check-in stays low-impact
+
+
+@pytest.mark.asyncio
+async def test_annotate_lite_maps_to_minimal_response_mode():
+    t = FakeTransport({"action": "proceed"})
+    a = UnitaresAdapter(t)
+    await a.annotate("Read", {}, "contents")  # default response_mode="lite"
+    name, args = t.calls[-1]
+    assert name == "process_agent_update"
+    assert args["response_mode"] == "minimal"
