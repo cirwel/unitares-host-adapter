@@ -22,7 +22,6 @@ Usage in a Hermes plugin:
 
 from __future__ import annotations
 
-import os
 from typing import Any, Optional
 
 from unitares_host_adapter.core import UnitaresAdapter
@@ -78,6 +77,12 @@ def register(
     async def on_session_end(**kwargs: Any) -> None:
         session_id = kwargs.get("session_id", "")
         await _adapter.on_session_end(session_id)
+        # Close the transport if it owns a connection (the default streamable
+        # transport does); injected/fake transports may not.
+        transport = getattr(_adapter, "_transport", None)
+        aclose = getattr(transport, "aclose", None)
+        if aclose is not None:
+            await aclose()
 
     ctx.register_hook("pre_tool_call", pre_tool_call)
     ctx.register_hook("post_tool_call", post_tool_call)
@@ -89,16 +94,12 @@ def register(
 
 
 def _build_default_adapter() -> UnitaresAdapter:
-    """Construct an adapter from environment config.
+    """Construct an adapter wired to the default streamable-HTTP transport.
 
-    Transport construction is stubbed here; the real MCP client wrapper lands
-    in v0.2. For v0.1, callers should pass an explicit adapter with their own
-    transport, or rely on this stub when running in tests.
+    Reads UNITARES_MCP_URL / UNITARES_BEARER from the environment. The
+    transport connects lazily on the first governance call (on_session_start),
+    so building the adapter performs no I/O.
     """
-    _url = os.environ.get("UNITARES_MCP_URL", "https://gov.cirwel.org/mcp/")
-    _bearer = os.environ.get("UNITARES_BEARER")  # noqa: F841 — reserved for v0.2
+    from unitares_host_adapter.transport import StreamableHTTPTransport
 
-    raise NotImplementedError(
-        "Default transport construction lands in v0.2. "
-        "For v0.1, pass an explicit UnitaresAdapter with your MCP transport."
-    )
+    return UnitaresAdapter(StreamableHTTPTransport.from_env())
