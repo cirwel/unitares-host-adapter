@@ -27,14 +27,20 @@ dependencies = [
 
 [project.optional-dependencies]
 hermes = []
+proxy = [
+    "starlette>=0.37.0",
+    "uvicorn>=0.27.0",
+]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.1.0",
+    "starlette>=0.37.0",
 ]
 
 [project.scripts]
 uhaa = "unitares_host_adapter.cli:main"
+uhaa-proxy = "unitares_host_adapter.bindings.openai_proxy:main"
 
 [project.urls]
 Homepage = "https://github.com/CIRWEL/unitares-host-adapter"
