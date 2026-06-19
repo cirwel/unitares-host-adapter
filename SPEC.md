@@ -64,6 +64,12 @@ A host binding is the glue between UNITARES delivery modes and a specific host's
 3. Provide sane defaults for `response_mode` per delivery mode (ambient default: `lite`; explicit default: `auto`).
 4. Expose a one-line install path: the user should not need to read UNITARES internals to wire the binding.
 
+## Naming boundary
+
+This spec uses **binding** or **host adapter** for code in this package. Some hosts load that binding through a host-specific plugin mechanism. For example, Hermes Agent loads `unitares_host_adapter.bindings.hermes` through a thin user plugin at `~/.hermes/plugins/unitares`; the Hermes plugin is the entrypoint, while this package remains the adapter implementation.
+
+Direct MCP configuration is a separate surface: it makes UNITARES tools visible to the host, but it does not create automatic session lifecycle hooks unless the host adapter/plugin layer also runs.
+
 ## Session lifecycle
 
 Bindings SHOULD also wire these lifecycle events when the host exposes them:
@@ -95,7 +101,7 @@ Bindings SHOULD pin to a MAJOR version of the spec.
 
 ## Reference implementations
 
-- `unitares_host_adapter.bindings.hermes` — Nous Research Hermes Agent plugin.
+- `unitares_host_adapter.bindings.hermes` — Hermes Agent lifecycle binding, loaded by a thin Hermes user plugin.
 - `unitares_host_adapter.bindings.claude_code` — Claude Code hooks via settings.json.
 - `unitares_host_adapter.bindings.goose` — Goose extension.
 - `unitares_host_adapter.bindings.generic_mcp` — explicit-only fallback for any MCP-capable host.
