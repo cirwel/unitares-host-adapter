@@ -6,7 +6,7 @@ One library. Three delivery modes. Multiple host bindings. Your agent host now c
 
 ## What this is
 
-UNITARES governance (EISV state vectors, verdicts, coherence, calibration, a shared knowledge graph) is served as an MCP server at `gov.cirwel.org/mcp/`. This package is the client-side adapter that wires the UNITARES MCP surface into the lifecycle hooks of common agent hosts, so an agent running on any of them gets governance without writing custom plugin code.
+UNITARES governance (EISV state vectors, verdicts, coherence, calibration, a shared knowledge graph) is served as an MCP server at `gov.cirwel.org/mcp/`. This package is the host-adapter library that wires the UNITARES MCP surface into the lifecycle hooks of common agent hosts, so an agent running on any of them gets governance without each host reimplementing governance logic.
 
 See [`SPEC.md`](./SPEC.md) for the full delivery-surface specification.
 
@@ -15,6 +15,19 @@ See [`SPEC.md`](./SPEC.md) for the full delivery-surface specification.
 - Not an agent host (no TUI, no gateway, no runtime).
 - Not a replacement for the UNITARES governance MCP server.
 - Not where the governance primitive lives — just where the host bindings live.
+- Not the older `unitares-governance-plugin` repo; that repo packages Claude/Codex-facing guidance, hooks, and sidecar tooling.
+
+## Terminology: adapter vs plugin vs MCP
+
+These names are easy to blur, especially for Hermes:
+
+| Name | Lives where | Role |
+|---|---|---|
+| UNITARES governance server | `cirwel/unitares` / MCP endpoint | Source of truth for identities, EISV, verdicts, calibration, dialectic, and KG. |
+| Direct MCP config | Host config, e.g. `mcp_servers.unitares` in Hermes | Makes UNITARES tools callable. By itself it does not add lifecycle hooks or automatic check-ins. |
+| Host adapter library | This repo, `unitares-host-adapter` | Reusable bindings that connect host lifecycle hooks to UNITARES. |
+| Hermes user plugin | `~/.hermes/plugins/unitares` | Thin Hermes runtime entrypoint that imports `unitares_host_adapter.bindings.hermes`. |
+| Governance plugin repo | `unitares-governance-plugin` | Claude/Codex plugin packaging, shared skills, command guidance, and sidecar workflows. It is not the Hermes-native lifecycle adapter. |
 
 ## Quick start
 
@@ -24,7 +37,7 @@ pip install unitares-host-adapter
 
 ### Hermes Agent
 
-Create a normal Hermes plugin directory and delegate to the host binding:
+For Hermes, this library is loaded through a normal Hermes user plugin. The plugin directory is the runtime entrypoint; this repo supplies the binding logic. Create a normal Hermes plugin directory and delegate to the host binding:
 
 ```yaml
 # ~/.hermes/plugins/unitares/plugin.yaml
