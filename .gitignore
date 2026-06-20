@@ -8,3 +8,5 @@ build/
 .venv/
 .env
 .worktrees/
+
+.unitares/
