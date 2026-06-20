@@ -1,6 +1,6 @@
 # unitares-host-adapter
 
-Thin client bindings that mount [UNITARES](https://github.com/CIRWEL/unitares) governance into AI-agent hosts — Hermes Agent, Claude Code, Goose, and any MCP-capable agent.
+Thin client bindings that mount [UNITARES](https://github.com/cirwel/unitares) governance into AI-agent hosts — Hermes Agent, Claude Code, Goose, and any MCP-capable agent.
 
 One library. Three delivery modes. Multiple host bindings. Your agent host now carries governance.
 
