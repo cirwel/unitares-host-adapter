@@ -36,13 +36,26 @@ class FakeTransport:
         return self._available_tools
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name == "record_result":
+            assert set(arguments) <= {
+                "agent_id",
+                "session_id",
+                "client_session_id",
+                "outcome_type",
+                "detail",
+                "verification_source",
+                "prediction_id",
+            }
         self.calls.append((name, arguments))
         if name == "sync_state":
             v = self._verdict
-            return {
+            response = {
                 "verdict": {"value": v.get("action", "proceed"), "meaning": v.get("message", "")},
                 "margin": v.get("margin"),
             }
+            if v.get("prediction_id"):
+                response["prediction_id"] = v["prediction_id"]
+            return response
         if name == "onboard":
             return {"agent_uuid": "u-1", "client_session_id": "csid-1"}
         return {}
@@ -219,8 +232,97 @@ async def test_outcome_event_feeds_calibration():
     assert name == "record_result"
     # Real contract: required outcome_type enum, detail (singular) carries metadata.
     assert args["outcome_type"] == "task_completed"
-    assert args["detail"] == {"tool_name": "Bash", "exit_code": 0}
+    assert args["detail"] == {
+        "tool_name": "Bash",
+        "exit_code": 0,
+        "public_operation": "record_result",
+    }
+    assert args["verification_source"] == "agent_reported_tool_result"
     assert "success" not in args and "details" not in args
+
+
+@pytest.mark.asyncio
+async def test_outcome_event_keeps_observed_identity_authoritative():
+    t = FakeTransport()
+    a = UnitaresAdapter(t)
+    await a.outcome_event(
+        "Bash",
+        success=True,
+        details={"tool_name": "spoofed", "public_operation": "spoofed"},
+    )
+
+    detail = t.calls[-1][1]["detail"]
+    assert detail["tool_name"] == "Bash"
+    assert detail["public_operation"] == "record_result"
+
+
+@pytest.mark.asyncio
+async def test_checkin_names_public_operation_in_provenance():
+    t = FakeTransport({"action": "proceed"})
+    a = UnitaresAdapter(t)
+
+    await a.checkin(
+        "did work",
+        provenance_context={"governance_mode": "automatic_turn_checkin"},
+    )
+
+    name, args = t.calls[-1]
+    assert name == "sync_state"
+    assert args["provenance_context"] == {
+        "governance_mode": "automatic_turn_checkin",
+        "public_operation": "sync_state",
+    }
+
+
+@pytest.mark.asyncio
+async def test_checkin_redacts_nested_provenance_and_keeps_operation_authoritative():
+    t = FakeTransport({"action": "proceed"})
+    a = UnitaresAdapter(t)
+
+    await a.checkin(
+        "did work",
+        provenance_context={
+            "public_operation": "spoofed",
+            "nested": {"authorization": "Bearer private-token"},
+            "dsn": "postgres://alice:private-pass@example/db",
+        },
+    )
+
+    provenance = t.calls[-1][1]["provenance_context"]
+    assert provenance["public_operation"] == "sync_state"
+    assert "private-token" not in repr(provenance)
+    assert "private-pass" not in repr(provenance)
+    assert "[REDACTED]" in repr(provenance)
+
+
+@pytest.mark.asyncio
+async def test_prediction_id_binding_is_explicit_per_outcome():
+    t = FakeTransport({"action": "proceed", "prediction_id": "pred-public-1"})
+    a = UnitaresAdapter(t)
+
+    verdict = await a.checkin("bounded prediction", confidence=0.8)
+    await a.outcome_event(
+        "Bash",
+        success=True,
+        prediction_id=verdict.raw["prediction_id"],
+    )
+    first_outcome = t.calls[-1][1]
+    assert first_outcome["prediction_id"] == "pred-public-1"
+
+    await a.outcome_event("Read", success=True)
+    second_outcome = t.calls[-1][1]
+    assert "prediction_id" not in second_outcome
+
+
+@pytest.mark.asyncio
+async def test_missing_prediction_id_does_not_create_a_binding():
+    t = FakeTransport({"action": "proceed"})
+    a = UnitaresAdapter(t)
+
+    await a.checkin("metadata-only checkin")
+    await a.outcome_event("Read", success=True)
+
+    assert "prediction_id" not in t.calls[-1][1]
 
 
 @pytest.mark.asyncio

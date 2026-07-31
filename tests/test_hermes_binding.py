@@ -280,7 +280,13 @@ def test_outcome_hook_omits_raw_error_messages() -> None:
     )
 
     details = adapter.events[-1][2]["details"]
-    assert details == {"status": "error", "error_type": "RuntimeError"}
+    assert details == {
+        "status": "error",
+        "error_type": "RuntimeError",
+        "governance_mode": "automatic_tool_outcome",
+        "harness": "hermes_plugin",
+        "verification_source": "hook_observation",
+    }
     assert "private-token" not in repr(adapter.events[-1])
 
 

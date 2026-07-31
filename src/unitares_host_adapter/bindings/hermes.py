@@ -332,6 +332,9 @@ def register(
         details = {
             "status": kwargs.get("status") or ("ok" if success else "error"),
             "error_type": kwargs.get("error_type") or "",
+            "governance_mode": "automatic_tool_outcome",
+            "harness": "hermes_plugin",
+            "verification_source": "hook_observation",
         }
         _run_guarded(
             _session_key(kwargs),
