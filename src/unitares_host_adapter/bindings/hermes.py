@@ -229,7 +229,7 @@ def register(
             return False, None
         try:
             value = _run(awaitable_factory())
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             count = failure_counts.get(session_id, 0) + 1
             failure_counts[session_id] = count
             if count >= _HOOK_FAILURE_LIMIT:
@@ -375,7 +375,7 @@ def register(
         try:
             if adapter_for_session is not None:
                 _run(adapter_for_session.on_session_end(session_id))
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             _LOGGER.warning(
                 "UNITARES Hermes session finalization failed (%s); continuing fail-open",
                 type(exc).__name__,

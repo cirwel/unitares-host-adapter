@@ -7,6 +7,7 @@ must expose synchronous callbacks that drive the async adapter internally.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import Any
 
@@ -328,6 +329,32 @@ def test_turn_checkin_failures_open_a_fail_open_session_circuit() -> None:
 
     checkins = [event for event in adapter.events if event[0] == "checkin"]
     assert len(checkins) == 3
+
+
+def test_session_onboarding_cancellation_is_fail_open_and_bounded() -> None:
+    """Transport cancellation must not cancel Hermes or bypass the circuit."""
+
+    class CancelledStartAdapter(FakeAdapter):
+        async def on_session_start(self, session_id: str, **kwargs: Any) -> None:
+            self.events.append(("on_session_start", (session_id,), kwargs))
+            raise asyncio.CancelledError("transport initialization cancelled")
+
+    ctx = FakeCtx()
+    adapter = CancelledStartAdapter()
+    register(ctx, adapter=adapter)
+
+    for _ in range(5):
+        assert (
+            ctx.hooks["pre_llm_call"](
+                session_id="cancelled-onboard",
+                model="m",
+                platform="cli",
+            )
+            is None
+        )
+
+    starts = [event for event in adapter.events if event[0] == "on_session_start"]
+    assert len(starts) == 3
 
 
 def test_adapter_factory_failures_are_fail_open_and_circuit_bounded() -> None:
