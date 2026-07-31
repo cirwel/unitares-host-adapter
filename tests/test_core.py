@@ -16,13 +16,28 @@ class FakeTransport:
     in the real process_agent_update shape ({"verdict": {"value": ...}, ...}) so
     the parser is exercised against the contract it sees in production."""
 
-    def __init__(self, verdict: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        verdict: dict[str, Any] | None = None,
+        *,
+        available_tools: set[str] | None = None,
+    ) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.list_tools_calls = 0
         self._verdict = verdict or {"action": "proceed", "message": ""}
+        self._available_tools = available_tools or {
+            "onboard",
+            "sync_state",
+            "record_result",
+        }
+
+    async def list_tools(self) -> set[str]:
+        self.list_tools_calls += 1
+        return self._available_tools
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((name, arguments))
-        if name == "process_agent_update":
+        if name == "sync_state":
             v = self._verdict
             return {
                 "verdict": {"value": v.get("action", "proceed"), "meaning": v.get("message", "")},
@@ -107,6 +122,7 @@ async def test_on_session_start_calls_onboard_with_real_identity_args():
     a = UnitaresAdapter(t, agent_label="Hermes Test", model_type="hermes-test")
     await a.on_session_start("s-123", purpose="test")
     assert a.session_id == "s-123"
+    assert t.list_tools_calls == 1
     assert t.calls[0][0] == "onboard"
     assert t.calls[0][1]["force_new"] is True
     assert t.calls[0][1]["name"] == "Hermes Test"
@@ -123,6 +139,18 @@ async def test_on_session_start_captures_client_session_id():
     await a.on_session_start("s-123")
     # Captured from the onboard response, distinct from the host session id.
     assert a.client_session_id == "csid-1"
+
+
+@pytest.mark.asyncio
+async def test_on_session_start_refuses_incompatible_public_tool_surface_before_onboard():
+    """An incompatible server must not receive an identity-minting call."""
+    t = FakeTransport(available_tools={"onboard", "process_agent_update"})
+    a = UnitaresAdapter(t)
+
+    with pytest.raises(RuntimeError, match="sync_state"):
+        await a.on_session_start("s-incompatible")
+
+    assert t.calls == []
 
 
 @pytest.mark.asyncio
@@ -188,11 +216,38 @@ async def test_outcome_event_feeds_calibration():
     a = UnitaresAdapter(t)
     await a.outcome_event("Bash", success=True, details={"exit_code": 0})
     name, args = t.calls[-1]
-    assert name == "outcome_event"
+    assert name == "record_result"
     # Real contract: required outcome_type enum, detail (singular) carries metadata.
     assert args["outcome_type"] == "task_completed"
     assert args["detail"] == {"tool_name": "Bash", "exit_code": 0}
     assert "success" not in args and "details" not in args
+
+
+@pytest.mark.asyncio
+async def test_tool_telemetry_redacts_nested_secrets_and_dsn_credentials():
+    t = FakeTransport()
+    a = UnitaresAdapter(t)
+
+    await a.gate(
+        "Bash",
+        {
+            "env": {"API_TOKEN": "private-token"},
+            "command": "connect postgres://alice:private-pass@example/db",
+        },
+    )
+    gate_args = t.calls[-1][1]
+    assert "private-token" not in gate_args["response_text"]
+    assert "private-pass" not in gate_args["response_text"]
+    assert "[REDACTED]" in gate_args["response_text"]
+
+    await a.outcome_event(
+        "Bash",
+        success=False,
+        details={"error_type": "RuntimeError", "password": "private-pass"},
+    )
+    outcome_args = t.calls[-1][1]
+    assert "private-pass" not in repr(outcome_args["detail"])
+    assert outcome_args["detail"]["password"] == "[REDACTED]"
 
 
 @pytest.mark.asyncio
@@ -222,13 +277,13 @@ async def test_gate_uses_minimal_response_mode():
 # --- reconciled tool vocabulary (real governance contract) ------------------
 
 @pytest.mark.asyncio
-async def test_checkin_targets_process_agent_update_with_real_args():
-    # Not the fictional "checkin" tool, and purpose maps to response_text.
+async def test_checkin_targets_public_sync_state_alias_with_real_args():
+    # Public MCP surfaces expose sync_state, and purpose maps to response_text.
     t = FakeTransport({"action": "proceed"})
     a = UnitaresAdapter(t)
     await a.checkin("did the thing", confidence=0.8)
     name, args = t.calls[-1]
-    assert name == "process_agent_update"
+    assert name == "sync_state"
     assert args["response_text"] == "did the thing"
     assert "complexity" in args and 0.0 <= args["complexity"] <= 1.0
     assert args["confidence"] == 0.8
@@ -264,5 +319,5 @@ async def test_annotate_lite_maps_to_minimal_response_mode():
     a = UnitaresAdapter(t)
     await a.annotate("Read", {}, "contents")  # default response_mode="lite"
     name, args = t.calls[-1]
-    assert name == "process_agent_update"
+    assert name == "sync_state"
     assert args["response_mode"] == "minimal"

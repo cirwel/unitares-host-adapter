@@ -118,9 +118,38 @@ def test_post_llm_call_is_sync_and_emits_turn_checkin() -> None:
 
     assert not inspect.isawaitable(result)
     assert adapter.events[-1][0] == "checkin"
-    assert adapter.events[-1][1][0] == "Turn completed: Completed the requested work."
+    purpose = adapter.events[-1][1][0]
+    assert purpose == "Hermes assistant turn completed"
+    assert "Completed the requested work" not in purpose
     assert adapter.events[-1][2]["response_mode"] == "minimal"
     assert adapter.events[-1][2]["complexity"] == 0.2
+    assert "confidence" not in adapter.events[-1][2]
+    assert adapter.events[-1][2]["epistemic_class"] == "substrate_interpretation"
+    assert adapter.events[-1][2]["provenance_context"] == {
+        "harness_type": "hermes_plugin",
+        "governance_mode": "automatic_turn_checkin",
+        "tool_surface": "hermes_lifecycle_hook",
+        "transport": "streamable_http",
+        "verification_source": "hook_observation",
+    }
+
+
+def test_post_llm_call_does_not_persist_secret_shaped_response_content() -> None:
+    """Automatic governance metadata must never include assistant response text."""
+    ctx = FakeCtx()
+    adapter = FakeAdapter()
+    register(ctx, adapter=adapter)
+
+    ctx.hooks["post_llm_call"](
+        session_id="secret-session",
+        assistant_response="DATABASE_URL=postgres://private:secret@example/db",
+        model="m",
+        platform="cli",
+    )
+
+    checkin_event = adapter.events[-1]
+    assert "private" not in repr(checkin_event)
+    assert "secret" not in repr(checkin_event)
 
 
 def test_alternating_sessions_keep_distinct_adapters_and_continuity() -> None:
@@ -169,6 +198,40 @@ def test_session_finalize_clears_adapter_for_true_boundary() -> None:
     assert [event[0] for event in adapters[1].events] == ["on_session_start", "checkin"]
 
 
+def test_session_finalize_is_fail_open_and_allows_a_fresh_session_adapter() -> None:
+    """Cleanup failures must not escape into Hermes or strand circuit state."""
+
+    class FailingEndAdapter(FakeAdapter):
+        async def on_session_end(self, session_id: str, **kwargs: Any) -> None:
+            self.events.append(("on_session_end", (session_id,), kwargs))
+            raise RuntimeError("cleanup failed")
+
+    ctx = FakeCtx()
+    adapters: list[FakeAdapter] = []
+
+    def factory() -> FakeAdapter:
+        created: FakeAdapter
+        if not adapters:
+            created = FailingEndAdapter()
+        else:
+            created = FakeAdapter()
+        adapters.append(created)
+        return created
+
+    register(ctx, adapter_factory=factory)
+    ctx.hooks["pre_llm_call"](
+        session_id="finalize-failure", model="m", platform="cli"
+    )
+
+    assert ctx.hooks["on_session_finalize"](session_id="finalize-failure") is None
+    ctx.hooks["pre_llm_call"](
+        session_id="finalize-failure", model="m", platform="cli"
+    )
+
+    assert len(adapters) == 2
+    assert adapters[1].events[0][0] == "on_session_start"
+
+
 def test_tool_hooks_are_sync_and_delegate_to_adapter() -> None:
     ctx = FakeCtx()
     adapter = FakeAdapter()
@@ -203,6 +266,24 @@ def test_outcome_hook_parses_error_result_when_status_is_absent() -> None:
     assert adapter.events[-1][2]["success"] is False
 
 
+def test_outcome_hook_omits_raw_error_messages() -> None:
+    ctx = FakeCtx()
+    adapter = FakeAdapter()
+    register(ctx, adapter=adapter, enable_outcomes=True)
+
+    ctx.hooks["post_tool_call"](
+        session_id="s-private-outcome",
+        tool_name="Bash",
+        status="error",
+        error_type="RuntimeError",
+        error_message="Authorization: Bearer private-token",
+    )
+
+    details = adapter.events[-1][2]["details"]
+    assert details == {"status": "error", "error_type": "RuntimeError"}
+    assert "private-token" not in repr(adapter.events[-1])
+
+
 def test_tool_hooks_can_fall_back_to_task_id_when_session_id_missing() -> None:
     ctx = FakeCtx()
     adapter = FakeAdapter()
@@ -213,3 +294,53 @@ def test_tool_hooks_can_fall_back_to_task_id_when_session_id_missing() -> None:
     assert block == {"action": "block", "message": "blocked by test"}
     assert [event[0] for event in adapter.events] == ["on_session_start", "gate"]
     assert adapter.events[0][1] == ("task-only",)
+
+
+def test_turn_checkin_failures_open_a_fail_open_session_circuit() -> None:
+    """A broken governance endpoint must not fail or retry on every Hermes turn."""
+
+    class FailingCheckinAdapter(FakeAdapter):
+        async def checkin(self, purpose: str, **kwargs: Any) -> Any:
+            self.events.append(("checkin", (purpose,), kwargs))
+            raise RuntimeError("unknown tool")
+
+    ctx = FakeCtx()
+    adapter = FailingCheckinAdapter()
+    register(ctx, adapter=adapter)
+    ctx.hooks["pre_llm_call"](session_id="circuit", model="m", platform="cli")
+
+    for _ in range(5):
+        assert (
+            ctx.hooks["post_llm_call"](
+                session_id="circuit",
+                assistant_response="response",
+                model="m",
+                platform="cli",
+            )
+            is None
+        )
+
+    checkins = [event for event in adapter.events if event[0] == "checkin"]
+    assert len(checkins) == 3
+
+
+def test_adapter_factory_failures_are_fail_open_and_circuit_bounded() -> None:
+    ctx = FakeCtx()
+    attempts = 0
+
+    def failing_factory() -> FakeAdapter:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("factory failed")
+
+    register(ctx, adapter_factory=failing_factory)
+
+    for _ in range(5):
+        assert (
+            ctx.hooks["pre_llm_call"](
+                session_id="factory-circuit", model="m", platform="cli"
+            )
+            is None
+        )
+
+    assert attempts == 3
