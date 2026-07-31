@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unitares-host-adapter"
-version = "0.2.1"
+version = "0.2.2"
 description = "Thin client bindings that mount UNITARES governance into agent hosts (Hermes, Claude Code, Goose, ...)"
 readme = "README.md"
 license = { text = "Apache-2.0" }
