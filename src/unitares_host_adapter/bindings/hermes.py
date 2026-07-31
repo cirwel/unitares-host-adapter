@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from typing import Any, Callable, Optional
 
@@ -41,7 +42,15 @@ _adapter: Any = None
 _adapters: dict[str, Any] = {}
 
 _HOOK_TIMEOUT_SECONDS = 30.0
-_RESPONSE_EXCERPT_CHARS = 240
+_HOOK_FAILURE_LIMIT = 3
+_TURN_PROVENANCE = {
+    "harness_type": "hermes_plugin",
+    "governance_mode": "automatic_turn_checkin",
+    "tool_surface": "hermes_lifecycle_hook",
+    "transport": "streamable_http",
+    "verification_source": "hook_observation",
+}
+_LOGGER = logging.getLogger(__name__)
 
 
 class _PerCallStreamableHTTPTransport:
@@ -91,6 +100,18 @@ class _PerCallStreamableHTTPTransport:
             call_timeout=self.call_timeout,
         ) as transport:
             return await transport.call_tool(name, arguments)
+
+    async def list_tools(self) -> set[str]:
+        """Discover capabilities in the same bounded per-call transport lifecycle."""
+        from unitares_host_adapter.transport import StreamableHTTPTransport
+
+        async with StreamableHTTPTransport(
+            self.mcp_url,
+            bearer=self._bearer,
+            connect_timeout=self.connect_timeout,
+            call_timeout=self.call_timeout,
+        ) as transport:
+            return await transport.list_tools()
 
 
 def _run(awaitable: Any) -> Any:
@@ -187,12 +208,43 @@ def register(
     """
     global _adapter, _adapters
     _adapters = {}
+    failure_counts: dict[str, int] = {}
+    open_circuits: set[str] = set()
     if adapter is not None:
-        factory: Callable[[], Any] = lambda: adapter
+        def factory() -> Any:
+            return adapter
+
         _adapter = adapter
     else:
         factory = adapter_factory or _build_default_adapter
         _adapter = None
+
+    def _run_guarded(
+        session_id: str,
+        operation: str,
+        awaitable_factory: Callable[[], Any],
+    ) -> tuple[bool, Any]:
+        """Run fail-open and stop retrying after bounded consecutive failures."""
+        if session_id in open_circuits:
+            return False, None
+        try:
+            value = _run(awaitable_factory())
+        except Exception as exc:
+            count = failure_counts.get(session_id, 0) + 1
+            failure_counts[session_id] = count
+            if count >= _HOOK_FAILURE_LIMIT:
+                open_circuits.add(session_id)
+            if count == 1 or count == _HOOK_FAILURE_LIMIT:
+                _LOGGER.warning(
+                    "UNITARES Hermes %s failed (%s); consecutive_failures=%d; circuit_open=%s",
+                    operation,
+                    type(exc).__name__,
+                    count,
+                    count >= _HOOK_FAILURE_LIMIT,
+                )
+            return False, None
+        failure_counts.pop(session_id, None)
+        return True, value
 
     def _adapter_for(session_id: str) -> Any:
         global _adapter
@@ -203,39 +255,52 @@ def register(
 
     def _ensure_session(**kwargs: Any) -> Any:
         session_id = _session_key(kwargs)
-        if not session_id:
+        if not session_id or session_id in open_circuits:
             return None
-        adapter_for_session = _adapter_for(session_id)
+        if session_id not in _adapters:
+            ok, adapter_for_session = _run_guarded(
+                session_id,
+                "adapter_factory",
+                lambda: _adapter_for(session_id),
+            )
+            if not ok:
+                return None
+        else:
+            adapter_for_session = _adapter_for(session_id)
         current = getattr(adapter_for_session, "session_id", None)
         if current == session_id:
             return adapter_for_session
         platform = str(kwargs.get("platform") or "hermes")
         model = str(kwargs.get("model") or "unknown-model")
         purpose = f"hermes:{platform}:{model}"
-        _run(adapter_for_session.on_session_start(session_id, purpose=purpose))
-        return adapter_for_session
+        ok, _ = _run_guarded(
+            session_id,
+            "onboard",
+            lambda: adapter_for_session.on_session_start(session_id, purpose=purpose),
+        )
+        return adapter_for_session if ok else None
 
     def pre_llm_call(**kwargs: Any) -> None:
         _ensure_session(**kwargs)
         return None
 
     def post_llm_call(**kwargs: Any) -> None:
+        session_id = _session_key(kwargs)
         adapter_for_session = _ensure_session(**kwargs)
         if adapter_for_session is None:
             return None
         if not enable_turn_checkin:
             return None
-        response = str(kwargs.get("assistant_response") or "").strip().replace("\n", " ")
-        if not response:
-            response = "no assistant response text"
-        excerpt = response[:_RESPONSE_EXCERPT_CHARS]
-        _run(
-            adapter_for_session.checkin(
-                f"Turn completed: {excerpt}",
+        _run_guarded(
+            session_id,
+            "turn_checkin",
+            lambda: adapter_for_session.checkin(
+                "Hermes assistant turn completed",
                 response_mode="minimal",
                 complexity=0.2,
-                confidence=0.7,
-            )
+                epistemic_class="substrate_interpretation",
+                provenance_context=dict(_TURN_PROVENANCE),
+            ),
         )
         return None
 
@@ -247,7 +312,13 @@ def register(
             return None
         tool_name = kwargs.get("tool_name", "")
         args = kwargs.get("args", {}) or {}
-        directive = _run(adapter_for_session.gate(tool_name, args))
+        ok, directive = _run_guarded(
+            _session_key(kwargs),
+            "tool_gate",
+            lambda: adapter_for_session.gate(tool_name, args),
+        )
+        if not ok:
+            return None
         return directive.as_dict() if directive else None
 
     def post_tool_call(**kwargs: Any) -> None:
@@ -261,9 +332,14 @@ def register(
         details = {
             "status": kwargs.get("status") or ("ok" if success else "error"),
             "error_type": kwargs.get("error_type") or "",
-            "error_message": kwargs.get("error_message") or "",
         }
-        _run(adapter_for_session.outcome_event(tool_name, success=success, details=details))
+        _run_guarded(
+            _session_key(kwargs),
+            "tool_outcome",
+            lambda: adapter_for_session.outcome_event(
+                tool_name, success=success, details=details
+            ),
+        )
         return None
 
     def transform_tool_result(**kwargs: Any) -> Any:
@@ -275,7 +351,13 @@ def register(
         tool_name = kwargs.get("tool_name", "")
         args = kwargs.get("args", {}) or {}
         result = kwargs.get("result")
-        annotated = _run(adapter_for_session.annotate(tool_name, args, result))
+        ok, annotated = _run_guarded(
+            _session_key(kwargs),
+            "tool_annotation",
+            lambda: adapter_for_session.annotate(tool_name, args, result),
+        )
+        if not ok:
+            return result
         return annotated.render() if annotated.annotation else result
 
     def on_session_start(**kwargs: Any) -> None:
@@ -287,8 +369,17 @@ def register(
         if not session_id:
             return None
         adapter_for_session = _adapters.pop(session_id, None)
-        if adapter_for_session is not None:
-            _run(adapter_for_session.on_session_end(session_id))
+        try:
+            if adapter_for_session is not None:
+                _run(adapter_for_session.on_session_end(session_id))
+        except Exception as exc:
+            _LOGGER.warning(
+                "UNITARES Hermes session finalization failed (%s); continuing fail-open",
+                type(exc).__name__,
+            )
+        finally:
+            failure_counts.pop(session_id, None)
+            open_circuits.discard(session_id)
         return None
 
     ctx.register_hook("pre_llm_call", pre_llm_call)

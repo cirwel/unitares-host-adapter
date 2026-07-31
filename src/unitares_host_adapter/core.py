@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional, Protocol
 
 from unitares_host_adapter.types import (
@@ -15,7 +16,12 @@ from unitares_host_adapter.types import (
 class MCPTransport(Protocol):
     """Minimal transport surface the adapter needs. The real implementation wraps mcp.ClientSession."""
 
+    async def list_tools(self) -> set[str]: ...
+
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]: ...
+
+
+REQUIRED_LIFECYCLE_TOOLS = frozenset({"onboard", "sync_state"})
 
 
 class UnitaresAdapter:
@@ -45,6 +51,7 @@ class UnitaresAdapter:
         # and lands on a sibling identity (or is refused), so onboarding alone
         # is not enough — the proof must be threaded through.
         self._client_session_id: Optional[str] = None
+        self._available_tools: Optional[set[str]] = None
 
     @property
     def session_id(self) -> Optional[str]:
@@ -56,6 +63,7 @@ class UnitaresAdapter:
 
     async def on_session_start(self, session_id: str, *, purpose: str = "", **_: Any) -> None:
         """Mint governance identity for a new host session. Host-agnostic lifecycle entry point."""
+        await self._ensure_tools(REQUIRED_LIFECYCLE_TOOLS)
         raw = await self._transport.call_tool(
             "onboard",
             {
@@ -79,6 +87,17 @@ class UnitaresAdapter:
             arguments["client_session_id"] = self._client_session_id
         return arguments
 
+    async def _ensure_tools(self, required: set[str] | frozenset[str]) -> None:
+        """Fail before a write when the server omits required public tool names."""
+        if self._available_tools is None:
+            self._available_tools = await self._transport.list_tools()
+        missing = sorted(set(required) - self._available_tools)
+        if missing:
+            raise RuntimeError(
+                "UNITARES MCP public tool contract is incompatible; missing: "
+                + ", ".join(missing)
+            )
+
     async def checkin(
         self,
         purpose: str,
@@ -86,8 +105,11 @@ class UnitaresAdapter:
         response_mode: ResponseMode = "auto",
         confidence: Optional[float] = None,
         complexity: float = 0.3,
+        epistemic_class: Optional[str] = None,
+        provenance_context: Optional[dict[str, Any]] = None,
     ) -> Verdict:
         """Mode 1: Explicit delivery. Agent initiates a check-in."""
+        await self._ensure_tools({"sync_state"})
         arguments: dict[str, Any] = {
             "response_text": purpose,
             "complexity": complexity,
@@ -95,7 +117,11 @@ class UnitaresAdapter:
         }
         if confidence is not None:
             arguments["confidence"] = confidence
-        raw = await self._transport.call_tool("process_agent_update", self._bind(arguments))
+        if epistemic_class is not None:
+            arguments["epistemic_class"] = epistemic_class
+        if provenance_context is not None:
+            arguments["provenance_context"] = provenance_context
+        raw = await self._transport.call_tool("sync_state", self._bind(arguments))
         return self._verdict_from_raw(raw)
 
     async def gate(
@@ -115,8 +141,9 @@ class UnitaresAdapter:
         tool_context parameter). Low complexity keeps these synthetic check-ins
         from inflating the agent's state.
         """
+        await self._ensure_tools({"sync_state"})
         raw = await self._transport.call_tool(
-            "process_agent_update",
+            "sync_state",
             self._bind({
                 "response_text": f"gate:{tool_name} args={_preview(args)}",
                 "complexity": 0.1,
@@ -143,8 +170,9 @@ class UnitaresAdapter:
         Like gate(), this issues a low-complexity check-in (the only verdict
         source) with the tool context folded into response_text.
         """
+        await self._ensure_tools({"sync_state"})
         raw = await self._transport.call_tool(
-            "process_agent_update",
+            "sync_state",
             self._bind({
                 "response_text": f"ambient:{tool_name} args={_preview(args)}",
                 "complexity": 0.1,
@@ -168,11 +196,15 @@ class UnitaresAdapter:
         success bool. A generic per-tool result maps to task_completed /
         task_failed; the tool name and any caller metadata go in ``detail``
         (singular — the server has no ``details`` parameter)."""
+        await self._ensure_tools({"record_result"})
         await self._transport.call_tool(
-            "outcome_event",
+            "record_result",
             self._bind({
                 "outcome_type": "task_completed" if success else "task_failed",
-                "detail": {"tool_name": tool_name, **(details or {})},
+                "detail": {
+                    "tool_name": tool_name,
+                    **_redact_sensitive(details or {}),
+                },
             }),
         )
 
@@ -233,8 +265,52 @@ def _find(obj: Any, key: str) -> Optional[str]:
     return None
 
 
+_SECRET_KEY = re.compile(
+    r"api[_-]?key|auth(?:orization)?|bearer|cookie|credential|"
+    r"pass(?:word|wd)?|private[_-]?key|secret|token",
+    re.IGNORECASE,
+)
+_SECRET_ASSIGNMENT = re.compile(
+    r"\b(api[_-]?key|authorization|bearer|cookie|credential|password|passwd|secret|token)"
+    r"(\s*[:=]\s*)([^\s,;]+)",
+    re.IGNORECASE,
+)
+_BEARER_VALUE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
+_DSN_CREDENTIALS = re.compile(
+    r"([a-z][a-z0-9+.-]*://)([^/@\s:]+):([^@\s]+)@",
+    re.IGNORECASE,
+)
+
+
+def _redact_secret_text(value: str) -> str:
+    """Redact common secret assignments, bearer values, and DSN credentials."""
+    redacted = _DSN_CREDENTIALS.sub(r"\1[REDACTED]@", value)
+    redacted = _BEARER_VALUE.sub("Bearer [REDACTED]", redacted)
+    return _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", redacted)
+
+
+def _redact_sensitive(value: Any) -> Any:
+    """Recursively redact telemetry while preserving non-sensitive structure."""
+    if isinstance(value, dict):
+        return {
+            key: (
+                "[REDACTED]"
+                if _SECRET_KEY.search(str(key))
+                else _redact_sensitive(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_sensitive(item) for item in value)
+    if isinstance(value, str):
+        return _redact_secret_text(value)
+    return value
+
+
 def _preview(args: dict[str, Any], *, max_chars: int = 200) -> str:
-    s = str(args)
+    s = str(_redact_sensitive(args))
     return s if len(s) <= max_chars else s[: max_chars - 1] + "…"
 
 

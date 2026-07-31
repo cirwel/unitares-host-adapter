@@ -7,16 +7,16 @@ to a live governance MCP (e.g. ``https://gov.cirwel.org/mcp/``).
 
 Lifecycle: ``streamable_http_client`` opens an anyio task group that must be
 entered and exited on the SAME task. Open via ``connect()`` (or ``async with``)
-and close via ``aclose()`` from that task. ``aclose()`` shields the unwind so a
-caller-side cancellation cannot tear the task group down on a different task —
-the "exit cancel scope in a different task" crash class the UNITARES SDK hit in
-its sentinel loop.
+and close via ``aclose()`` from that task. A lifecycle cancel scope is entered
+before MCP contexts and switched to shielded only during unwind, preserving
+strict LIFO order while preventing cancellation from stranding resources.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from typing import Any, Optional
 
@@ -26,6 +26,7 @@ from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 DEFAULT_MCP_URL = "https://gov.cirwel.org/mcp/"
+_LOGGER = logging.getLogger(__name__)
 
 
 class TransportError(RuntimeError):
@@ -54,6 +55,7 @@ class StreamableHTTPTransport:
         self._session: Optional[ClientSession] = None
         self._http_client: Optional[httpx.AsyncClient] = None
         self._cm_stack: list[Any] = []
+        self._lifecycle_scope: anyio.CancelScope | None = None
 
     @classmethod
     def from_env(cls, **kwargs: Any) -> "StreamableHTTPTransport":
@@ -71,24 +73,49 @@ class StreamableHTTPTransport:
         await self.connect()
         return self
 
-    async def __aexit__(self, *exc: Any) -> None:
-        await self.aclose()
+    async def __aexit__(self, *exc: Any) -> bool:
+        try:
+            await self.aclose()
+        except BaseException as close_error:
+            if isinstance(
+                close_error,
+                (asyncio.CancelledError, KeyboardInterrupt, SystemExit),
+            ):
+                raise
+            _LOGGER.warning(
+                "UNITARES MCP cleanup failed after MCP operation (%s); "
+                "preserving the operation result",
+                type(close_error).__name__,
+            )
+        return False
 
     async def connect(self) -> None:
         """Open the MCP session. Idempotent; a no-op if already connected."""
         if self._session is not None:
             return
-        self._http_client = httpx.AsyncClient(headers=self._headers(), timeout=self.call_timeout)
-        cm = streamable_http_client(self.mcp_url, http_client=self._http_client)
-        read, write, _ = await cm.__aenter__()
-        self._cm_stack.append(cm)
-        session_cm = ClientSession(read, write)
-        self._session = await session_cm.__aenter__()
-        self._cm_stack.append(session_cm)
-        # Bound the handshake: an anyio-stream hang inside initialize() is not
-        # covered by httpx's timeout and would block until the caller's outer
-        # timeout cancels the whole task.
-        await asyncio.wait_for(self._session.initialize(), self.connect_timeout)
+        lifecycle_scope = anyio.CancelScope()
+        lifecycle_scope.__enter__()
+        self._lifecycle_scope = lifecycle_scope
+        try:
+            self._http_client = httpx.AsyncClient(
+                headers=self._headers(), timeout=self.call_timeout
+            )
+            cm = streamable_http_client(self.mcp_url, http_client=self._http_client)
+            read, write, _ = await cm.__aenter__()
+            self._cm_stack.append(cm)
+            session_cm = ClientSession(read, write)
+            self._session = await session_cm.__aenter__()
+            self._cm_stack.append(session_cm)
+            # Bound the handshake: an anyio-stream hang inside initialize() is not
+            # covered by httpx's timeout and would block until the caller's outer
+            # timeout cancels the whole task.
+            await asyncio.wait_for(self._session.initialize(), self.connect_timeout)
+        except BaseException:
+            try:
+                await self.aclose()
+            except BaseException:
+                pass
+            raise
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._session is None:
@@ -98,24 +125,60 @@ class StreamableHTTPTransport:
             result = await self._session.call_tool(name, arguments)
         return _parse_result(result)
 
+    async def list_tools(self) -> set[str]:
+        """Return the public tool names advertised by MCP tools/list."""
+        if self._session is None:
+            await self.connect()
+        assert self._session is not None
+        names: set[str] = set()
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        with anyio.fail_after(self.call_timeout):
+            while True:
+                result = await self._session.list_tools(cursor=cursor)
+                names.update(str(tool.name) for tool in result.tools)
+                next_cursor = getattr(result, "nextCursor", None)
+                if not next_cursor:
+                    break
+                cursor = str(next_cursor)
+                if cursor in seen_cursors:
+                    raise TransportError("MCP tools/list returned a repeated cursor")
+                seen_cursors.add(cursor)
+        return names
+
     async def aclose(self) -> None:
-        """Close the session and HTTP client. Shielded so a caller cancellation
-        cannot unwind the anyio task group on a different task."""
+        """Close contexts in strict LIFO order in the task that opened them.
+
+        AnyIO task groups own cancel scopes that must be exited while they are
+        the current scope. Wrapping ``__aexit__`` in a new shield scope breaks
+        that invariant and can leave the MCP stream generator unclosed.
+        """
+        lifecycle_scope = self._lifecycle_scope
+        if lifecycle_scope is not None:
+            lifecycle_scope.shield = True
+        first_error: BaseException | None = None
         for cm in reversed(self._cm_stack):
             try:
-                with anyio.CancelScope(shield=True):
-                    await cm.__aexit__(None, None, None)
-            except Exception:
-                pass
+                await cm.__aexit__(None, None, None)
+            except BaseException as exc:
+                first_error = first_error or exc
         self._cm_stack.clear()
         self._session = None
-        if self._http_client is not None:
+        http_client = self._http_client
+        self._http_client = None
+        if http_client is not None:
             try:
-                with anyio.CancelScope(shield=True):
-                    await self._http_client.aclose()
-            except Exception:
-                pass
-            self._http_client = None
+                await http_client.aclose()
+            except BaseException as exc:
+                first_error = first_error or exc
+        self._lifecycle_scope = None
+        if lifecycle_scope is not None:
+            try:
+                lifecycle_scope.__exit__(None, None, None)
+            except BaseException as exc:
+                first_error = first_error or exc
+        if first_error is not None:
+            raise first_error
 
 
 def _parse_result(result: Any) -> dict[str, Any]:
