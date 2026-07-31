@@ -119,8 +119,11 @@ class UnitaresAdapter:
             arguments["confidence"] = confidence
         if epistemic_class is not None:
             arguments["epistemic_class"] = epistemic_class
-        if provenance_context is not None:
-            arguments["provenance_context"] = provenance_context
+        safe_provenance = _redact_sensitive(provenance_context or {})
+        if not isinstance(safe_provenance, dict):
+            safe_provenance = {}
+        safe_provenance["public_operation"] = "sync_state"
+        arguments["provenance_context"] = safe_provenance
         raw = await self._transport.call_tool("sync_state", self._bind(arguments))
         return self._verdict_from_raw(raw)
 
@@ -188,24 +191,33 @@ class UnitaresAdapter:
         tool_name: str,
         *,
         success: bool,
-        details: Optional[dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
+        prediction_id: str | None = None,
     ) -> None:
         """Feed calibration ground truth after a tool call completes.
 
         The server keys outcomes on a required ``outcome_type`` enum, not a
         success bool. A generic per-tool result maps to task_completed /
         task_failed; the tool name and any caller metadata go in ``detail``
-        (singular — the server has no ``details`` parameter)."""
+        """
         await self._ensure_tools({"record_result"})
+        detail = _redact_sensitive(details or {})
+        if not isinstance(detail, dict):
+            detail = {}
+        # Host-observed identity and public operation are authoritative; caller
+        # metadata cannot relabel the evidence source.
+        detail["tool_name"] = tool_name
+        detail["public_operation"] = "record_result"
+        arguments: dict[str, Any] = {
+            "outcome_type": "task_completed" if success else "task_failed",
+            "detail": detail,
+            "verification_source": "agent_reported_tool_result",
+        }
+        if prediction_id:
+            arguments["prediction_id"] = prediction_id
         await self._transport.call_tool(
             "record_result",
-            self._bind({
-                "outcome_type": "task_completed" if success else "task_failed",
-                "detail": {
-                    "tool_name": tool_name,
-                    **_redact_sensitive(details or {}),
-                },
-            }),
+            self._bind(arguments),
         )
 
     @staticmethod
