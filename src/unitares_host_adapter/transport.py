@@ -21,9 +21,10 @@ import os
 from typing import Any, Optional
 
 import anyio
-import httpx
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared._httpx_utils import create_mcp_http_client
+from mcp.types import PaginatedRequestParams
 
 DEFAULT_MCP_URL = "https://gov.cirwel.org/mcp/"
 _LOGGER = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ class StreamableHTTPTransport:
         self.connect_timeout = connect_timeout
         self.call_timeout = call_timeout
         self._session: Optional[ClientSession] = None
-        self._http_client: Optional[httpx.AsyncClient] = None
+        self._http_client: Optional[Any] = None
         self._cm_stack: list[Any] = []
         self._lifecycle_scope: anyio.CancelScope | None = None
 
@@ -97,12 +98,11 @@ class StreamableHTTPTransport:
         lifecycle_scope.__enter__()
         self._lifecycle_scope = lifecycle_scope
         try:
-            self._http_client = httpx.AsyncClient(
-                headers=self._headers(), timeout=self.call_timeout
-            )
+            self._http_client = create_mcp_http_client(headers=self._headers())
             cm = streamable_http_client(self.mcp_url, http_client=self._http_client)
-            read, write, _ = await cm.__aenter__()
+            streams = await cm.__aenter__()
             self._cm_stack.append(cm)
+            read, write, *_ = streams
             session_cm = ClientSession(read, write)
             self._session = await session_cm.__aenter__()
             self._cm_stack.append(session_cm)
@@ -135,9 +135,16 @@ class StreamableHTTPTransport:
         seen_cursors: set[str] = set()
         with anyio.fail_after(self.call_timeout):
             while True:
-                result = await self._session.list_tools(cursor=cursor)
+                params = (
+                    PaginatedRequestParams(cursor=cursor)
+                    if cursor is not None
+                    else None
+                )
+                result = await self._session.list_tools(params=params)
                 names.update(str(tool.name) for tool in result.tools)
-                next_cursor = getattr(result, "nextCursor", None)
+                next_cursor = getattr(result, "next_cursor", None) or getattr(
+                    result, "nextCursor", None
+                )
                 if not next_cursor:
                     break
                 cursor = str(next_cursor)
@@ -186,8 +193,9 @@ def _parse_result(result: Any) -> dict[str, Any]:
 
     HTTP-level success does not imply tool-level success: the streamable_http
     transport can wrap a structured failure in an otherwise-200 response, so
-    ``isError`` is checked first. Mirrors the UNITARES SDK's parser."""
-    if getattr(result, "isError", False):
+    both SDK field spellings (``is_error`` / ``isError``) are checked first.
+    Mirrors the UNITARES SDK's parser."""
+    if getattr(result, "is_error", False) or getattr(result, "isError", False):
         error_text = ""
         for content in getattr(result, "content", []) or []:
             if hasattr(content, "text"):

@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import anyio
 import pytest
+from mcp.types import CallToolResult, TextContent
 
 from unitares_host_adapter import StreamableHTTPTransport, TransportError, UnitaresAdapter
 from unitares_host_adapter.transport import DEFAULT_MCP_URL, _parse_result
@@ -47,6 +48,17 @@ def test_parse_empty_content():
 def test_parse_raises_on_is_error():
     result = SimpleNamespace(isError=True, content=[SimpleNamespace(text="boom")])
     with pytest.raises(TransportError, match="boom"):
+        _parse_result(result)
+
+
+def test_parse_raises_on_installed_sdk_tool_error_shape():
+    """Tool errors must survive both MCP 1 wire aliases and MCP 2 field names."""
+    result = CallToolResult(
+        content=[TextContent(type="text", text="denied")],
+        isError=True,
+    )
+
+    with pytest.raises(TransportError, match="denied"):
         _parse_result(result)
 
 
@@ -105,13 +117,143 @@ async def test_call_tool_parses_via_transport():
 
 
 @pytest.mark.asyncio
+async def test_connect_accepts_two_stream_mcp_transport_shape(monkeypatch):
+    """MCP 2 yields read/write streams without the legacy session-id callback."""
+    import unitares_host_adapter.transport as transport_module
+
+    class _HTTPClient:
+        async def aclose(self) -> None:
+            return None
+
+    class _TransportContext:
+        async def __aenter__(self):
+            return object(), object()
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+        async def initialize(self) -> None:
+            return None
+
+    http_client = _HTTPClient()
+    monkeypatch.setattr(
+        transport_module,
+        "create_mcp_http_client",
+        lambda **kwargs: http_client,
+        raising=False,
+    )
+    legacy_httpx = getattr(transport_module, "httpx", None)
+    if legacy_httpx is not None:
+        monkeypatch.setattr(
+            legacy_httpx,
+            "AsyncClient",
+            lambda **kwargs: http_client,
+        )
+    monkeypatch.setattr(
+        transport_module,
+        "streamable_http_client",
+        lambda *args, **kwargs: _TransportContext(),
+    )
+    monkeypatch.setattr(
+        transport_module,
+        "ClientSession",
+        lambda *args: _SessionContext(),
+    )
+
+    transport = StreamableHTTPTransport("http://example/mcp/")
+    await transport.connect()
+    try:
+        assert transport._session is not None
+    finally:
+        await transport.aclose()
+
+
+@pytest.mark.asyncio
+async def test_connect_uses_mcp_http_client_factory(monkeypatch):
+    """The MCP SDK must choose its matching httpx/httpx2 client implementation."""
+    import unitares_host_adapter.transport as transport_module
+
+    factory_calls: list[dict[str, Any]] = []
+
+    class _HTTPClient:
+        async def aclose(self) -> None:
+            return None
+
+    class _TransportContext:
+        async def __aenter__(self):
+            return object(), object(), lambda: None
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+    class _SessionContext:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc: Any) -> None:
+            return None
+
+        async def initialize(self) -> None:
+            return None
+
+    http_client = _HTTPClient()
+
+    def create_http_client(**kwargs: Any) -> _HTTPClient:
+        factory_calls.append(kwargs)
+        return http_client
+
+    def streamable_client(*args: Any, **kwargs: Any) -> _TransportContext:
+        assert kwargs["http_client"] is http_client
+        return _TransportContext()
+
+    monkeypatch.setattr(
+        transport_module,
+        "create_mcp_http_client",
+        create_http_client,
+        raising=False,
+    )
+    legacy_httpx = getattr(transport_module, "httpx", None)
+    if legacy_httpx is not None:
+        monkeypatch.setattr(
+            legacy_httpx,
+            "AsyncClient",
+            lambda **kwargs: pytest.fail("legacy httpx client constructor was used"),
+        )
+    monkeypatch.setattr(transport_module, "streamable_http_client", streamable_client)
+    monkeypatch.setattr(
+        transport_module,
+        "ClientSession",
+        lambda *args: _SessionContext(),
+    )
+
+    transport = StreamableHTTPTransport(
+        "http://example/mcp/",
+        bearer="private-test-token",
+    )
+    await transport.connect()
+    try:
+        assert factory_calls == [
+            {"headers": {"Authorization": "Bearer private-test-token"}}
+        ]
+    finally:
+        await transport.aclose()
+
+
+@pytest.mark.asyncio
 async def test_list_tools_returns_advertised_public_names():
     """Capability checks consume the real MCP tools/list response."""
     t = StreamableHTTPTransport("http://example/mcp/")
 
     class _Session:
-        async def list_tools(self, cursor: str | None = None):
-            assert cursor is None
+        async def list_tools(self, *, params=None):
+            assert params is None
             return SimpleNamespace(
                 tools=[SimpleNamespace(name="onboard"), SimpleNamespace(name="sync_state")],
                 nextCursor=None,
@@ -131,7 +273,8 @@ async def test_list_tools_follows_mcp_pagination():
         def __init__(self) -> None:
             self.cursors: list[str | None] = []
 
-        async def list_tools(self, cursor: str | None = None):
+        async def list_tools(self, *, params=None):
+            cursor = None if params is None else params.cursor
             self.cursors.append(cursor)
             if cursor is None:
                 return SimpleNamespace(
@@ -139,6 +282,33 @@ async def test_list_tools_follows_mcp_pagination():
                 )
             return SimpleNamespace(
                 tools=[SimpleNamespace(name="sync_state")], nextCursor=None
+            )
+
+    session = _Session()
+    t._session = cast(Any, session)
+
+    assert await t.list_tools() == {"onboard", "sync_state"}
+    assert session.cursors == [None, "page-2"]
+
+
+@pytest.mark.asyncio
+async def test_list_tools_uses_paginated_params_and_snake_case_cursor():
+    """MCP 2 accepts pagination through params and returns snake-case cursors."""
+    t = StreamableHTTPTransport("http://example/mcp/")
+
+    class _Session:
+        def __init__(self) -> None:
+            self.cursors: list[str | None] = []
+
+        async def list_tools(self, *, params=None):
+            cursor = None if params is None else params.cursor
+            self.cursors.append(cursor)
+            if cursor is None:
+                return SimpleNamespace(
+                    tools=[SimpleNamespace(name="onboard")], next_cursor="page-2"
+                )
+            return SimpleNamespace(
+                tools=[SimpleNamespace(name="sync_state")], next_cursor=None
             )
 
     session = _Session()
