@@ -37,7 +37,17 @@ pip install unitares-host-adapter
 
 ### Hermes Agent
 
-For Hermes, this library is loaded through a normal Hermes user plugin. The plugin directory is the runtime entrypoint; this repo supplies the binding logic. Create a normal Hermes plugin directory and delegate to the host binding:
+This repository is itself a Hermes directory plugin (`plugin.yaml` and `__init__.py` at the root), so Hermes can install it directly:
+
+```bash
+hermes plugins install cirwel/unitares-host-adapter
+```
+
+Hermes asks for `UNITARES_MCP_URL`, the Streamable HTTP endpoint of the UNITARES server you run (for example `http://127.0.0.1:8767/mcp/`, trailing slash included), and will not load the plugin without it; there is no default server. Set `UNITARES_BEARER` too if your server requires a token. Enabling the plugin asks for consent to build this package and its two dependencies (`mcp`, `httpx`) into the Hermes environment.
+
+The installed plugin runs the binding's default light mode: one onboard at the first turn of each Hermes session, one check-in per completed turn, and session close on finalize or reset. Every hook is fail-open: a server error is logged and never blocks the agent.
+
+To wire it by hand instead, or to opt into the per-tool modes, use a normal Hermes user plugin. The plugin directory is the runtime entrypoint; this repo supplies the binding logic. Create a normal Hermes plugin directory and delegate to the host binding:
 
 ```yaml
 # ~/.hermes/plugins/unitares/plugin.yaml
@@ -117,6 +127,7 @@ Bindings are landing in this order:
 - [x] Concrete streamable-HTTP MCP transport
 - [x] Hermes binding: lazy first-turn onboard + turn-level check-in
 - [x] Hermes opt-in gated / ambient / outcome hooks
+- [x] Hermes directory plugin (`hermes plugins install cirwel/unitares-host-adapter`)
 - [x] OpenAI-compatible governance proxy (transport-level binding; any client)
 - [ ] Claude Code binding
 - [ ] Goose binding

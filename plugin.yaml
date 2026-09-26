@@ -2,7 +2,7 @@ manifest_version: 1
 name: unitares
 kind: standalone
 version: 0.2.5
-description: "Reports Hermes session lifecycle to your own UNITARES governance server: one onboard per session and one check-in per completed turn. Fail-open; never blocks the agent."
+description: "Records each Hermes session on a UNITARES server you run: one identity per session and one check-in per completed turn. Fail-open; never blocks the agent."
 author: Kenny Wang
 license: Apache-2.0
 homepage: https://github.com/cirwel/unitares-host-adapter
