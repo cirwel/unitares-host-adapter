@@ -1,7 +1,7 @@
 manifest_version: 1
 name: unitares
 kind: standalone
-version: 0.2.5
+version: 0.3.0
 description: "Records each Hermes session on a UNITARES server you run: one identity per session and one check-in per completed turn. Fail-open; never blocks the agent."
 author: Kenny Wang
 license: Apache-2.0
