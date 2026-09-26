@@ -69,9 +69,13 @@ def register(ctx):
     register_unitares(ctx)
 ```
 
-Set `UNITARES_MCP_URL=http://localhost:8767/mcp/` for a local governance server,
-or leave it unset to use the packaged default. Enable the plugin in Hermes config
-(`plugins.enabled: [unitares]`) and restart Hermes so plugin discovery reruns.
+Set `UNITARES_MCP_URL` to your server's endpoint, for example
+`http://localhost:8767/mcp/` for a local server. Unlike the installed plugin
+above, this hand-wired path falls back to the library's `DEFAULT_MCP_URL`
+(`https://gov.cirwel.org/mcp/`, the maintainer's server) when the variable is
+unset, so set it unless you mean to report there. Enable the plugin in Hermes
+config (`plugins.enabled: [unitares]`) and restart Hermes so plugin discovery
+reruns.
 
 Opt-in per-tool modes are available when you explicitly want them:
 
