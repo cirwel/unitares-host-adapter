@@ -171,7 +171,7 @@ async def test_on_session_start_refuses_incompatible_public_tool_surface_before_
 
 @pytest.mark.asyncio
 async def test_on_session_start_uses_start_session_when_onboard_is_unadvertised():
-    """UNITARES #2137 lists only the start_session alias; onboarding must still work."""
+    """A server that lists only the start_session alias still onboards."""
     t = FakeTransport(available_tools={"start_session", "sync_state", "record_result"})
     a = UnitaresAdapter(t, agent_label="Hermes Test", model_type="hermes-test")
     await a.on_session_start("s-alias", purpose="test")
