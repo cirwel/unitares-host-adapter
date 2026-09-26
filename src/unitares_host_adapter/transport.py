@@ -3,7 +3,7 @@
 The v0.1 release shipped only the `MCPTransport` Protocol (`core.py`) plus an
 injected-fake test path; bindings raised NotImplementedError when asked to build
 a default transport. This module is the real client that lets the adapter talk
-to a live governance MCP (e.g. ``https://gov.cirwel.org/mcp/``).
+to a live governance MCP (e.g. ``http://127.0.0.1:8767/mcp/``).
 
 Lifecycle: ``streamable_http_client`` opens an anyio task group that must be
 entered and exited on the SAME task. Open via ``connect()`` (or ``async with``)
@@ -26,6 +26,8 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.types import PaginatedRequestParams
 
+from unitares_host_adapter.types import MissingServerURLError
+
 MCP_URL_ENV = "UNITARES_MCP_URL"
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ def mcp_url_from_env() -> str:
     """
     url = os.environ.get(MCP_URL_ENV, "").strip()
     if not url:
-        raise RuntimeError(
+        raise MissingServerURLError(
             f"{MCP_URL_ENV} is not set; set it to your UNITARES server's MCP endpoint, "
             "e.g. http://127.0.0.1:8767/mcp/"
         )
@@ -48,6 +50,7 @@ def mcp_url_from_env() -> str:
 
 class TransportError(RuntimeError):
     """Raised when the MCP layer marks a tool call as an error."""
+
 
 
 class StreamableHTTPTransport:

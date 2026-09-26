@@ -34,7 +34,7 @@ class UnitaresAdapter:
     """Adapter that exposes UNITARES governance as three delivery modes.
 
     Typical lifetime: one instance per host session. Construct with an MCPTransport
-    already connected to the UNITARES governance MCP (e.g. gov.cirwel.org/mcp/).
+    already connected to a UNITARES governance MCP (e.g. http://127.0.0.1:8767/mcp/).
 
     For host-specific wiring, import from unitares_host_adapter.bindings.<host>.
     """

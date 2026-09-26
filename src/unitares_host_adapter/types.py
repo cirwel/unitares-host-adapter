@@ -47,3 +47,11 @@ class AnnotatedResult:
         if not self.annotation:
             return str(self.result)
         return f"{self.result}\n\n---\n[UNITARES] {self.annotation}"
+
+
+class MissingServerURLError(RuntimeError):
+    """Raised when no UNITARES server URL is configured.
+
+    Defined here, free of the ``mcp`` dependency, so bindings can recognise it
+    without importing the transport.
+    """

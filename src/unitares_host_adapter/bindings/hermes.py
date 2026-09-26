@@ -34,6 +34,7 @@ import threading
 from typing import Any, Callable, Optional
 
 from unitares_host_adapter.core import UnitaresAdapter
+from unitares_host_adapter.types import MissingServerURLError
 
 # Adapter most recently touched by a hook. Returned from register() for backward
 # compatibility with early smoke tests; production state is kept per session in
@@ -235,10 +236,16 @@ def register(
             if count >= _HOOK_FAILURE_LIMIT:
                 open_circuits.add(session_id)
             if count == 1 or count == _HOOK_FAILURE_LIMIT:
+                # Only the missing-URL message is logged verbatim: it is local
+                # config advice. Other errors may carry server text, so they are
+                # logged by type alone.
+                reason = type(exc).__name__
+                if isinstance(exc, MissingServerURLError):
+                    reason = f"{reason}: {exc}"
                 _LOGGER.warning(
                     "UNITARES Hermes %s failed (%s); consecutive_failures=%d; circuit_open=%s",
                     operation,
-                    type(exc).__name__,
+                    reason,
                     count,
                     count >= _HOOK_FAILURE_LIMIT,
                 )

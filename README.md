@@ -6,7 +6,7 @@ One library. Three delivery modes. Multiple host bindings. Your agent host now c
 
 ## What this is
 
-UNITARES governance (EISV state vectors, verdicts, coherence, calibration, a shared knowledge graph) is served as an MCP server at `gov.cirwel.org/mcp/`. This package is the host-adapter library that wires the UNITARES MCP surface into the lifecycle hooks of common agent hosts, so an agent running on any of them gets governance without each host reimplementing governance logic.
+UNITARES governance (EISV state vectors, verdicts, coherence, calibration, a shared knowledge graph) is served by a UNITARES MCP server that you run (see [`cirwel/unitares`](https://github.com/cirwel/unitares); a local install listens on `http://127.0.0.1:8767/mcp/`). This package is the host-adapter library that wires the UNITARES MCP surface into the lifecycle hooks of common agent hosts, so an agent running on any of them gets governance without each host reimplementing governance logic.
 
 See [`SPEC.md`](./SPEC.md) for the full delivery-surface specification.
 
@@ -84,15 +84,19 @@ register_unitares(ctx, enable_gate=True, enable_ambient=True, enable_outcomes=Tr
 
 ### Claude Code
 
-```bash
-uhaa install claude-code --mcp-url http://127.0.0.1:8767/mcp/
-```
+There is no `uhaa` installer for Claude Code yet; `uhaa` itself only has
+`--version` and `spec`. Claude Code lifecycle hooks come from the
+[`unitares-governance`](https://github.com/cirwel/unitares-governance-plugin)
+plugin:
 
-Emits the appropriate hook entries into your `.claude/settings.json`.
+```text
+/plugin marketplace add cirwel/unitares-governance-plugin
+/plugin install unitares-governance@unitares-governance
+```
 
 ### Any MCP-capable host (explicit-only fallback)
 
-Add the UNITARES server to your host's MCP config with the URL above. No adapter needed for explicit mode; install this package only if you want ambient or gated delivery.
+Add your UNITARES server's MCP endpoint (for example `http://127.0.0.1:8767/mcp/`) to your host's MCP config. No adapter needed for explicit mode; install this package only if you want ambient or gated delivery.
 
 This path is **voluntary** — the agent *may* call governance if it chooses. The proxy below is how you make any OpenAI/MCP client *carry* governance instead.
 

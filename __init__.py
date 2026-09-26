@@ -41,7 +41,9 @@ def _adapter_from_env() -> Any:
     """Build the adapter for the configured server; never a default one."""
     url = os.environ.get(MCP_URL_ENV, "").strip()
     if not url:
-        raise RuntimeError(f"{MCP_URL_ENV} is not set; the UNITARES plugin has no server to report to")
+        raise _hermes_binding.MissingServerURLError(
+            f"{MCP_URL_ENV} is not set; the UNITARES plugin has no server to report to"
+        )
     return _hermes_binding.build_adapter(url, bearer=os.environ.get(BEARER_ENV))
 
 
