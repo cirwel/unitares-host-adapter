@@ -58,6 +58,9 @@ class FakeTransport:
             return response
         if name == "onboard":
             return {"agent_uuid": "u-1", "client_session_id": "csid-1"}
+        if name == "start_session":
+            # The alias wraps the same payload in a digest envelope.
+            return {"success": True, "tool": "start_session", "agent_uuid": "u-1", "client_session_id": "csid-1"}
         return {}
 
 
@@ -162,6 +165,39 @@ async def test_on_session_start_refuses_incompatible_public_tool_surface_before_
 
     with pytest.raises(RuntimeError, match="sync_state"):
         await a.on_session_start("s-incompatible")
+
+    assert t.calls == []
+
+
+@pytest.mark.asyncio
+async def test_on_session_start_uses_start_session_when_onboard_is_unadvertised():
+    """UNITARES #2137 lists only the start_session alias; onboarding must still work."""
+    t = FakeTransport(available_tools={"start_session", "sync_state", "record_result"})
+    a = UnitaresAdapter(t, agent_label="Hermes Test", model_type="hermes-test")
+    await a.on_session_start("s-alias", purpose="test")
+
+    name, args = t.calls[0]
+    assert name == "start_session"
+    assert args == {"name": "Hermes Test", "model_type": "hermes-test", "client_hint": "test", "force_new": True}
+    assert a.client_session_id == "csid-1"
+
+
+@pytest.mark.asyncio
+async def test_on_session_start_prefers_onboard_when_both_are_advertised():
+    t = FakeTransport(available_tools={"onboard", "start_session", "sync_state"})
+    a = UnitaresAdapter(t)
+    await a.on_session_start("s-both")
+
+    assert t.calls[0][0] == "onboard"
+
+
+@pytest.mark.asyncio
+async def test_on_session_start_refuses_when_no_onboarding_tool_is_advertised():
+    t = FakeTransport(available_tools={"sync_state", "record_result"})
+    a = UnitaresAdapter(t)
+
+    with pytest.raises(RuntimeError, match="onboard or start_session"):
+        await a.on_session_start("s-none")
 
     assert t.calls == []
 
