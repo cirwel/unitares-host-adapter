@@ -6,7 +6,7 @@ One library. Three delivery modes. Multiple host bindings. Your agent host now c
 
 ## What this is
 
-UNITARES governance (EISV state vectors, verdicts, coherence, calibration, a shared knowledge graph) is served as an MCP server at `gov.cirwel.org/mcp/`. This package is the host-adapter library that wires the UNITARES MCP surface into the lifecycle hooks of common agent hosts, so an agent running on any of them gets governance without each host reimplementing governance logic.
+UNITARES governance (EISV state vectors, verdicts, coherence, calibration, a shared knowledge graph) is served by a UNITARES MCP server that you run (see [`cirwel/unitares`](https://github.com/cirwel/unitares); a local install listens on `http://127.0.0.1:8767/mcp/`). This package is the host-adapter library that wires the UNITARES MCP surface into the lifecycle hooks of common agent hosts, so an agent running on any of them gets governance without each host reimplementing governance logic.
 
 See [`SPEC.md`](./SPEC.md) for the full delivery-surface specification.
 
@@ -15,7 +15,7 @@ See [`SPEC.md`](./SPEC.md) for the full delivery-surface specification.
 - Not an agent host (no TUI, no gateway, no runtime).
 - Not a replacement for the UNITARES governance MCP server.
 - Not where the governance primitive lives — just where the host bindings live.
-- Not the older `unitares-governance-plugin` repo; that repo packages Claude/Codex-facing guidance, hooks, and sidecar tooling.
+- Not the `unitares-governance-plugin` repo; that repo packages Claude/Codex-facing guidance, hooks, and sidecar tooling.
 
 ## Terminology: adapter vs plugin vs MCP
 
@@ -31,8 +31,10 @@ These names are easy to blur, especially for Hermes:
 
 ## Quick start
 
+The package is not on PyPI yet; install it from GitHub:
+
 ```bash
-pip install unitares-host-adapter
+pip install "git+https://github.com/cirwel/unitares-host-adapter"
 ```
 
 ### Hermes Agent
@@ -84,15 +86,19 @@ register_unitares(ctx, enable_gate=True, enable_ambient=True, enable_outcomes=Tr
 
 ### Claude Code
 
-```bash
-uhaa install claude-code --mcp-url http://127.0.0.1:8767/mcp/
-```
+There is no `uhaa` installer for Claude Code yet; `uhaa` itself only has
+`--version` and `spec`. Claude Code lifecycle hooks come from the
+[`unitares-governance`](https://github.com/cirwel/unitares-governance-plugin)
+plugin:
 
-Emits the appropriate hook entries into your `.claude/settings.json`.
+```text
+/plugin marketplace add cirwel/unitares-governance-plugin
+/plugin install unitares-governance@unitares-governance
+```
 
 ### Any MCP-capable host (explicit-only fallback)
 
-Add the UNITARES server to your host's MCP config with the URL above. No adapter needed for explicit mode; install this package only if you want ambient or gated delivery.
+Add your UNITARES server's MCP endpoint (for example `http://127.0.0.1:8767/mcp/`) to your host's MCP config. No adapter needed for explicit mode; install this package only if you want ambient or gated delivery.
 
 This path is **voluntary** — the agent *may* call governance if it chooses. The proxy below is how you make any OpenAI/MCP client *carry* governance instead.
 
@@ -101,7 +107,7 @@ This path is **voluntary** — the agent *may* call governance if it chooses. Th
 For clients that speak the OpenAI API but expose no lifecycle hooks, run the governance proxy in front of the model server and point the client's base URL at it:
 
 ```bash
-pip install unitares-host-adapter[proxy]
+pip install "unitares-host-adapter[proxy] @ git+https://github.com/cirwel/unitares-host-adapter"
 UNITARES_MCP_URL=http://127.0.0.1:8767/mcp/ \
 UNITARES_PROXY_UPSTREAM=http://localhost:11434 \
 uhaa-proxy            # listens on http://127.0.0.1:11435  -> point your client at /v1

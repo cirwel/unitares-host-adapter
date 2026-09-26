@@ -47,3 +47,11 @@ class AnnotatedResult:
         if not self.annotation:
             return str(self.result)
         return f"{self.result}\n\n---\n[UNITARES] {self.annotation}"
+
+
+class MissingServerURLError(RuntimeError):
+    """Raised when no UNITARES server URL is configured.
+
+    Its message is built locally and names only the environment variable, so
+    bindings may log it verbatim.
+    """

@@ -1,12 +1,12 @@
 """`uhaa` — CLI entry point for the UNITARES host adapter.
 
-v0.1 surface is deliberately tiny:
+The surface is deliberately tiny:
 
     uhaa --version     # print adapter version
     uhaa spec          # print path to the delivery-surface spec
 
-Real subcommands (install, gate, annotate, checkin) land in v0.2 once the
-default MCP transport is wired up.
+Host installers (install, gate, annotate, checkin) are not built yet. Host
+wiring lives in ``unitares_host_adapter.bindings`` and in ``uhaa-proxy``.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def _help_text() -> str:
         "  uhaa --version   print adapter version\n"
         "  uhaa spec        show path to the delivery-surface spec\n"
         "\n"
-        "Real subcommands (install, gate, annotate, checkin) land in v0.2.\n"
+        "Host installers are not built yet; see the README for host wiring.\n"
     )
 
 

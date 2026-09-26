@@ -102,6 +102,6 @@ Bindings SHOULD pin to a MAJOR version of the spec.
 ## Reference implementations
 
 - `unitares_host_adapter.bindings.hermes` — Hermes Agent lifecycle binding, loaded by a thin Hermes user plugin.
-- `unitares_host_adapter.bindings.claude_code` — Claude Code hooks via settings.json.
-- `unitares_host_adapter.bindings.goose` — Goose extension.
-- `unitares_host_adapter.bindings.generic_mcp` — explicit-only fallback for any MCP-capable host.
+- `unitares_host_adapter.bindings.openai_proxy` — transport-level binding for OpenAI-compatible clients (`uhaa-proxy`).
+
+Not yet built in this package: Claude Code, Goose, and generic-MCP bindings. Claude Code lifecycle hooks are currently provided by the separate [`unitares-governance`](https://github.com/cirwel/unitares-governance-plugin) plugin; any MCP-capable host can use explicit mode with no binding.

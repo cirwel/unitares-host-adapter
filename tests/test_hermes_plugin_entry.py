@@ -92,7 +92,7 @@ def test_factory_refuses_without_a_configured_server() -> None:
         if value is not None:
             env["UNITARES_MCP_URL"] = value
         with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(RuntimeError, match="UNITARES_MCP_URL"):
+            with pytest.raises(hermes_binding.MissingServerURLError, match="UNITARES_MCP_URL"):
                 entry._adapter_from_env()
 
 

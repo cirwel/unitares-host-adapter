@@ -377,3 +377,32 @@ def test_adapter_factory_failures_are_fail_open_and_circuit_bounded() -> None:
         )
 
     assert attempts == 3
+
+
+def test_missing_server_url_warning_names_the_variable(caplog) -> None:
+    from unitares_host_adapter.types import MissingServerURLError
+
+    ctx = FakeCtx()
+
+    def factory() -> FakeAdapter:
+        raise MissingServerURLError("UNITARES_MCP_URL is not set; set it")
+
+    register(ctx, adapter_factory=factory)
+    with caplog.at_level("WARNING", logger="unitares_host_adapter.bindings.hermes"):
+        ctx.hooks["pre_llm_call"](session_id="no-url", model="m", platform="cli")
+
+    assert "MissingServerURLError: UNITARES_MCP_URL is not set" in caplog.text
+
+
+def test_other_factory_errors_are_logged_by_type_only(caplog) -> None:
+    ctx = FakeCtx()
+
+    def factory() -> FakeAdapter:
+        raise RuntimeError("server said secret-token-123")
+
+    register(ctx, adapter_factory=factory)
+    with caplog.at_level("WARNING", logger="unitares_host_adapter.bindings.hermes"):
+        ctx.hooks["pre_llm_call"](session_id="other", model="m", platform="cli")
+
+    assert "(RuntimeError)" in caplog.text
+    assert "secret-token-123" not in caplog.text

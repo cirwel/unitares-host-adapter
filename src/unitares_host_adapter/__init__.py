@@ -5,6 +5,7 @@ from unitares_host_adapter.transport import StreamableHTTPTransport, TransportEr
 from unitares_host_adapter.types import (
     AnnotatedResult,
     BlockDirective,
+    MissingServerURLError,
     Verdict,
 )
 
@@ -14,6 +15,7 @@ __all__ = [
     "UnitaresAdapter",
     "StreamableHTTPTransport",
     "TransportError",
+    "MissingServerURLError",
     "Verdict",
     "BlockDirective",
     "AnnotatedResult",

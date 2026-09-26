@@ -14,6 +14,7 @@ from mcp.types import CallToolResult, TextContent
 
 from unitares_host_adapter import StreamableHTTPTransport, TransportError, UnitaresAdapter
 from unitares_host_adapter.transport import _parse_result
+from unitares_host_adapter.types import MissingServerURLError
 
 
 def _content(*texts: str) -> SimpleNamespace:
@@ -71,7 +72,7 @@ def test_from_env_refuses_without_a_configured_server(monkeypatch, value):
         monkeypatch.delenv("UNITARES_MCP_URL", raising=False)
     else:
         monkeypatch.setenv("UNITARES_MCP_URL", value)
-    with pytest.raises(RuntimeError, match="UNITARES_MCP_URL"):
+    with pytest.raises(MissingServerURLError, match="UNITARES_MCP_URL"):
         StreamableHTTPTransport.from_env()
 
 
