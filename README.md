@@ -1,6 +1,6 @@
 # unitares-host-adapter
 
-Thin client bindings that mount [UNITARES](https://github.com/cirwel/unitares) governance into AI-agent hosts — Hermes Agent, Claude Code, Goose, and any MCP-capable agent.
+Thin client bindings that mount [UNITARES](https://github.com/cirwel/unitares) governance into AI-agent hosts: Hermes Agent today, and any OpenAI-compatible client through a governance proxy.
 
 One library. Three delivery modes. Multiple host bindings. Your agent host now carries governance.
 
@@ -45,7 +45,11 @@ This repository is itself a Hermes directory plugin (`plugin.yaml` and `__init__
 hermes plugins install cirwel/unitares-host-adapter
 ```
 
-Hermes asks for `UNITARES_MCP_URL`, the Streamable HTTP endpoint of the UNITARES server you run (for example `http://127.0.0.1:8767/mcp/`, trailing slash included), and will not load the plugin without it; there is no default server. Set `UNITARES_BEARER` too if your server requires a token. Enabling the plugin asks for consent to build this package and its two dependencies (`mcp`, `httpx`) into the Hermes environment.
+The plugin reports to a UNITARES server you run. If you don't have one yet, the [one-command Docker install](https://github.com/cirwel/unitares#install) starts one on `http://localhost:8767/mcp/`.
+
+At install, Hermes asks for `UNITARES_MCP_URL`, that server's Streamable HTTP endpoint (for example `http://localhost:8767/mcp/`, trailing slash included). There is no default server: while the variable is unset, the hooks log a warning to the Hermes log and send nothing. Enabling the plugin asks for consent to build this package and its two dependencies (`mcp`, `httpx`) into the Hermes environment.
+
+The default Docker stack listens on loopback only and needs no token. If your server requires one (`UNITARES_MCP_BEARER_TOKENS`), set `UNITARES_BEARER` to one of its values. To reach a server from another machine or container, see the UNITARES [MCP client guide](https://github.com/cirwel/unitares/blob/master/docs/integration/MCP_CLIENTS.md) for allowed hosts and tokens.
 
 The installed plugin runs the binding's default light mode: one onboard at the first turn of each Hermes session, one check-in per completed turn, and session close on finalize or reset. Every hook is fail-open: a server error is logged and never blocks the agent.
 
@@ -54,7 +58,7 @@ To wire it by hand instead, or to opt into the per-tool modes, use a normal Herm
 ```yaml
 # ~/.hermes/plugins/unitares/plugin.yaml
 name: unitares
-version: 0.2.0
+version: 0.3.1
 description: UNITARES governance lifecycle adapter for Hermes
 provides_hooks:
   - pre_llm_call

@@ -23,10 +23,9 @@ class MCPTransport(Protocol):
 
 REQUIRED_LIFECYCLE_TOOLS = frozenset({"sync_state"})
 # Onboarding entry points in preference order. ``start_session`` is the
-# workflow alias of ``onboard`` with the same arguments; since UNITARES #2137
-# (2026-09-08) the public tools/list advertises the alias and no longer lists
-# ``onboard`` (still callable, just unadvertised). Older servers list only
-# ``onboard``, so it is tried first and their behavior is unchanged.
+# workflow alias of ``onboard`` with the same arguments. A server may list
+# either name in tools/list; ``onboard`` is used when listed, otherwise
+# ``start_session``.
 ONBOARD_TOOLS = ("onboard", "start_session")
 
 
