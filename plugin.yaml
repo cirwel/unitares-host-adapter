@@ -1,0 +1,24 @@
+manifest_version: 1
+name: unitares
+kind: standalone
+version: 0.2.5
+description: "Reports Hermes session lifecycle to your own UNITARES governance server: one onboard per session and one check-in per completed turn. Fail-open; never blocks the agent."
+author: Kenny Wang
+license: Apache-2.0
+homepage: https://github.com/cirwel/unitares-host-adapter
+requires_hermes: ">=0.21.0"
+requires_env:
+  - name: UNITARES_MCP_URL
+    description: "Streamable HTTP MCP endpoint of the UNITARES server you run, e.g. http://127.0.0.1:8767/mcp/ (keep the trailing slash)"
+    url: https://github.com/cirwel/unitares
+    password: false
+optional_env:
+  - name: UNITARES_BEARER
+    description: "Bearer token, if your UNITARES server requires one"
+    password: true
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call
+  - on_session_start
+  - on_session_finalize
+  - on_session_reset
