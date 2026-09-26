@@ -21,7 +21,13 @@ class MCPTransport(Protocol):
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]: ...
 
 
-REQUIRED_LIFECYCLE_TOOLS = frozenset({"onboard", "sync_state"})
+REQUIRED_LIFECYCLE_TOOLS = frozenset({"sync_state"})
+# Onboarding entry points in preference order. ``start_session`` is the
+# workflow alias of ``onboard`` with the same arguments; since UNITARES #2137
+# (2026-09-08) the public tools/list advertises the alias and no longer lists
+# ``onboard`` (still callable, just unadvertised). Older servers list only
+# ``onboard``, so it is tried first and their behavior is unchanged.
+ONBOARD_TOOLS = ("onboard", "start_session")
 
 
 class UnitaresAdapter:
@@ -65,7 +71,7 @@ class UnitaresAdapter:
         """Mint governance identity for a new host session. Host-agnostic lifecycle entry point."""
         await self._ensure_tools(REQUIRED_LIFECYCLE_TOOLS)
         raw = await self._transport.call_tool(
-            "onboard",
+            self._onboard_tool(),
             {
                 "name": self._agent_label or f"host-session:{session_id}",
                 "model_type": self._model_type,
@@ -97,6 +103,17 @@ class UnitaresAdapter:
                 "UNITARES MCP public tool contract is incompatible; missing: "
                 + ", ".join(missing)
             )
+
+    def _onboard_tool(self) -> str:
+        """The advertised onboarding tool; call after ``_ensure_tools`` loaded the list."""
+        available = self._available_tools or set()
+        for name in ONBOARD_TOOLS:
+            if name in available:
+                return name
+        raise RuntimeError(
+            "UNITARES MCP public tool contract is incompatible; missing: "
+            + " or ".join(ONBOARD_TOOLS)
+        )
 
     async def checkin(
         self,

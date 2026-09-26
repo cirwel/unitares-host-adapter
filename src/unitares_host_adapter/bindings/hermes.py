@@ -407,3 +407,20 @@ def _build_default_adapter() -> UnitaresAdapter:
         agent_label="Hermes Agent",
         model_type="hermes-agent",
     )
+
+
+def build_adapter(mcp_url: str, *, bearer: Optional[str] = None) -> UnitaresAdapter:
+    """Construct an adapter for an explicit server URL, with no default.
+
+    Unlike ``_build_default_adapter``, this never falls back to
+    ``DEFAULT_MCP_URL``: a caller that has no configured server gets an error
+    instead of sending governance traffic to a server it did not choose.
+    """
+    url = (mcp_url or "").strip()
+    if not url:
+        raise ValueError("a UNITARES MCP URL is required")
+    return UnitaresAdapter(
+        _PerCallStreamableHTTPTransport(url, bearer=bearer or None),
+        agent_label="Hermes Agent",
+        model_type="hermes-agent",
+    )
