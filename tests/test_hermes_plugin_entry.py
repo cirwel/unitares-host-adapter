@@ -21,7 +21,6 @@ import pytest
 
 import unitares_host_adapter
 from unitares_host_adapter.bindings import hermes as hermes_binding
-from unitares_host_adapter.transport import DEFAULT_MCP_URL
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -105,7 +104,6 @@ def test_factory_uses_only_the_configured_server_and_bearer() -> None:
 
     transport = adapter._transport
     assert transport.mcp_url == "http://127.0.0.1:8767/mcp/"
-    assert transport.mcp_url != DEFAULT_MCP_URL
     assert transport._bearer == "token-123"
 
 

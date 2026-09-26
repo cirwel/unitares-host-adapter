@@ -82,11 +82,11 @@ class _PerCallStreamableHTTPTransport:
 
     @classmethod
     def from_env(cls) -> "_PerCallStreamableHTTPTransport":
-        from unitares_host_adapter.transport import DEFAULT_MCP_URL
+        from unitares_host_adapter.transport import mcp_url_from_env
         import os
 
         return cls(
-            os.environ.get("UNITARES_MCP_URL", DEFAULT_MCP_URL),
+            mcp_url_from_env(),
             bearer=os.environ.get("UNITARES_BEARER"),
         )
 
@@ -412,9 +412,9 @@ def _build_default_adapter() -> UnitaresAdapter:
 def build_adapter(mcp_url: str, *, bearer: Optional[str] = None) -> UnitaresAdapter:
     """Construct an adapter for an explicit server URL, with no default.
 
-    Unlike ``_build_default_adapter``, this never falls back to
-    ``DEFAULT_MCP_URL``: a caller that has no configured server gets an error
-    instead of sending governance traffic to a server it did not choose.
+    Like ``_build_default_adapter``, this has no fallback server: a caller that
+    has no configured server gets an error instead of sending governance
+    traffic to a server it did not choose.
     """
     url = (mcp_url or "").strip()
     if not url:

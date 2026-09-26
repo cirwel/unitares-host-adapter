@@ -8,7 +8,7 @@ from unitares_host_adapter.types import (
     Verdict,
 )
 
-__version__ = "0.2.5"
+__version__ = "0.3.0"
 
 __all__ = [
     "UnitaresAdapter",

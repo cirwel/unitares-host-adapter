@@ -70,10 +70,9 @@ def register(ctx):
 ```
 
 Set `UNITARES_MCP_URL` to your server's endpoint, for example
-`http://localhost:8767/mcp/` for a local server. Unlike the installed plugin
-above, this hand-wired path falls back to the library's `DEFAULT_MCP_URL`
-(`https://gov.cirwel.org/mcp/`, the maintainer's server) when the variable is
-unset, so set it unless you mean to report there. Enable the plugin in Hermes
+`http://localhost:8767/mcp/` for a local server. As with the installed plugin
+above, the library has no default server: with the variable unset, the hooks
+log a warning and stay inactive instead of reporting anywhere. Enable the plugin in Hermes
 config (`plugins.enabled: [unitares]`) and restart Hermes so plugin discovery
 reruns.
 
@@ -86,7 +85,7 @@ register_unitares(ctx, enable_gate=True, enable_ambient=True, enable_outcomes=Tr
 ### Claude Code
 
 ```bash
-uhaa install claude-code --mcp-url https://gov.cirwel.org/mcp/
+uhaa install claude-code --mcp-url http://127.0.0.1:8767/mcp/
 ```
 
 Emits the appropriate hook entries into your `.claude/settings.json`.
@@ -103,7 +102,7 @@ For clients that speak the OpenAI API but expose no lifecycle hooks, run the gov
 
 ```bash
 pip install unitares-host-adapter[proxy]
-UNITARES_MCP_URL=https://gov.cirwel.org/mcp/ \
+UNITARES_MCP_URL=http://127.0.0.1:8767/mcp/ \
 UNITARES_PROXY_UPSTREAM=http://localhost:11434 \
 uhaa-proxy            # listens on http://127.0.0.1:11435  -> point your client at /v1
 ```
@@ -122,7 +121,7 @@ See [`SPEC.md`](./SPEC.md) for the full treatment.
 
 ## Status
 
-**v0.2 — alpha.** Signatures may change before 1.0.
+**v0.3 — alpha.** Signatures may change before 1.0.
 
 Bindings are landing in this order:
 
