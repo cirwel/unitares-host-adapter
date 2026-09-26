@@ -121,7 +121,7 @@ See [`SPEC.md`](./SPEC.md) for the full treatment.
 
 ## Status
 
-**v0.2 — alpha.** Signatures may change before 1.0.
+**v0.3 — alpha.** Signatures may change before 1.0.
 
 Bindings are landing in this order:
 
