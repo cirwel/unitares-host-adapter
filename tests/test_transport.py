@@ -13,7 +13,7 @@ import pytest
 from mcp.types import CallToolResult, TextContent
 
 from unitares_host_adapter import StreamableHTTPTransport, TransportError, UnitaresAdapter
-from unitares_host_adapter.transport import DEFAULT_MCP_URL, _parse_result
+from unitares_host_adapter.transport import _parse_result
 
 
 def _content(*texts: str) -> SimpleNamespace:
@@ -64,11 +64,22 @@ def test_parse_raises_on_installed_sdk_tool_error_shape():
 
 # --- env / header config ----------------------------------------------------
 
-def test_from_env_defaults(monkeypatch):
-    monkeypatch.delenv("UNITARES_MCP_URL", raising=False)
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_from_env_refuses_without_a_configured_server(monkeypatch, value):
+    # No default server: an unset or blank URL is an error, never a fallback.
+    if value is None:
+        monkeypatch.delenv("UNITARES_MCP_URL", raising=False)
+    else:
+        monkeypatch.setenv("UNITARES_MCP_URL", value)
+    with pytest.raises(RuntimeError, match="UNITARES_MCP_URL"):
+        StreamableHTTPTransport.from_env()
+
+
+def test_from_env_strips_url_and_omits_absent_bearer(monkeypatch):
+    monkeypatch.setenv("UNITARES_MCP_URL", " http://127.0.0.1:8767/mcp/ ")
     monkeypatch.delenv("UNITARES_BEARER", raising=False)
     t = StreamableHTTPTransport.from_env()
-    assert t.mcp_url == DEFAULT_MCP_URL
+    assert t.mcp_url == "http://127.0.0.1:8767/mcp/"
     assert t._headers() == {}
 
 
@@ -99,6 +110,22 @@ def test_build_default_adapter_uses_per_call_streamable_transport(monkeypatch):
     # wrapper instead of a long-lived StreamableHTTPTransport session.
     assert adapter._transport.__class__.__name__ == "_PerCallStreamableHTTPTransport"
     assert getattr(adapter._transport, "mcp_url") == "http://127.0.0.1:8767/mcp/"
+
+
+def test_build_default_adapter_refuses_without_a_configured_server(monkeypatch):
+    from unitares_host_adapter.bindings import hermes
+
+    monkeypatch.delenv("UNITARES_MCP_URL", raising=False)
+    with pytest.raises(RuntimeError, match="UNITARES_MCP_URL"):
+        hermes._build_default_adapter()
+
+
+def test_proxy_main_exits_without_a_configured_server(monkeypatch):
+    from unitares_host_adapter.bindings import openai_proxy
+
+    monkeypatch.delenv("UNITARES_MCP_URL", raising=False)
+    with pytest.raises(SystemExit, match="UNITARES_MCP_URL"):
+        openai_proxy.main()
 
 
 @pytest.mark.asyncio

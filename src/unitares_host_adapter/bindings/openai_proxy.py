@@ -277,14 +277,19 @@ def build_app(
 
 
 def main() -> None:
+    from unitares_host_adapter.transport import mcp_url_from_env
+
+    try:
+        mcp_url = mcp_url_from_env()
+    except RuntimeError as exc:
+        raise SystemExit(f"uhaa-proxy: {exc}") from None
+
     import uvicorn
 
     host = os.environ.get("UNITARES_PROXY_HOST", DEFAULT_BIND_HOST)
     port = int(os.environ.get("UNITARES_PROXY_PORT", DEFAULT_BIND_PORT))
     upstream = os.environ.get("UNITARES_PROXY_UPSTREAM", DEFAULT_UPSTREAM)
     mode = os.environ.get("UNITARES_PROXY_MODE", "observe")
-    mcp_url = os.environ.get("UNITARES_MCP_URL", "https://gov.cirwel.org/mcp/")
-
     print(f"UNITARES OpenAI governance proxy  ({mode} mode)")
     print(f"  listening : http://{host}:{port}  ->  point your client's base URL here (/v1)")
     print(f"  upstream  : {upstream}")

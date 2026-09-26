@@ -26,8 +26,24 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.types import PaginatedRequestParams
 
-DEFAULT_MCP_URL = "https://gov.cirwel.org/mcp/"
+MCP_URL_ENV = "UNITARES_MCP_URL"
 _LOGGER = logging.getLogger(__name__)
+
+
+def mcp_url_from_env() -> str:
+    """Return the configured server URL, or raise if none is configured.
+
+    There is deliberately no default server: a caller that has not named one
+    gets an error instead of sending governance traffic, and its bearer token,
+    to a server it did not choose.
+    """
+    url = os.environ.get(MCP_URL_ENV, "").strip()
+    if not url:
+        raise RuntimeError(
+            f"{MCP_URL_ENV} is not set; set it to your UNITARES server's MCP endpoint, "
+            "e.g. http://127.0.0.1:8767/mcp/"
+        )
+    return url
 
 
 class TransportError(RuntimeError):
@@ -62,7 +78,7 @@ class StreamableHTTPTransport:
     def from_env(cls, **kwargs: Any) -> "StreamableHTTPTransport":
         """Build from UNITARES_MCP_URL / UNITARES_BEARER (the binding default)."""
         return cls(
-            os.environ.get("UNITARES_MCP_URL", DEFAULT_MCP_URL),
+            mcp_url_from_env(),
             bearer=os.environ.get("UNITARES_BEARER"),
             **kwargs,
         )
