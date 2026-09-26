@@ -52,7 +52,6 @@ class TransportError(RuntimeError):
     """Raised when the MCP layer marks a tool call as an error."""
 
 
-
 class StreamableHTTPTransport:
     """One transport per adapter/session. Connects lazily; reused across calls.
 

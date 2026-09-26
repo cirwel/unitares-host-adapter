@@ -15,7 +15,7 @@ See [`SPEC.md`](./SPEC.md) for the full delivery-surface specification.
 - Not an agent host (no TUI, no gateway, no runtime).
 - Not a replacement for the UNITARES governance MCP server.
 - Not where the governance primitive lives — just where the host bindings live.
-- Not the older `unitares-governance-plugin` repo; that repo packages Claude/Codex-facing guidance, hooks, and sidecar tooling.
+- Not the `unitares-governance-plugin` repo; that repo packages Claude/Codex-facing guidance, hooks, and sidecar tooling.
 
 ## Terminology: adapter vs plugin vs MCP
 
@@ -31,8 +31,10 @@ These names are easy to blur, especially for Hermes:
 
 ## Quick start
 
+The package is not on PyPI yet; install it from GitHub:
+
 ```bash
-pip install unitares-host-adapter
+pip install "git+https://github.com/cirwel/unitares-host-adapter"
 ```
 
 ### Hermes Agent
@@ -105,7 +107,7 @@ This path is **voluntary** — the agent *may* call governance if it chooses. Th
 For clients that speak the OpenAI API but expose no lifecycle hooks, run the governance proxy in front of the model server and point the client's base URL at it:
 
 ```bash
-pip install unitares-host-adapter[proxy]
+pip install "unitares-host-adapter[proxy] @ git+https://github.com/cirwel/unitares-host-adapter"
 UNITARES_MCP_URL=http://127.0.0.1:8767/mcp/ \
 UNITARES_PROXY_UPSTREAM=http://localhost:11434 \
 uhaa-proxy            # listens on http://127.0.0.1:11435  -> point your client at /v1

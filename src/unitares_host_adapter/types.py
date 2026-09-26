@@ -52,6 +52,6 @@ class AnnotatedResult:
 class MissingServerURLError(RuntimeError):
     """Raised when no UNITARES server URL is configured.
 
-    Defined here, free of the ``mcp`` dependency, so bindings can recognise it
-    without importing the transport.
+    Its message is built locally and names only the environment variable, so
+    bindings may log it verbatim.
     """
