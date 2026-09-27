@@ -13,8 +13,11 @@ refuses to load it while that variable is unset (``requires_env`` in
 fallback to a default server. ``UNITARES_BEARER`` is sent when set.
 
 Behavior is the binding's default light mode: one lazy onboard at the first
-turn, one check-in per completed assistant turn, and session close on finalize
-or reset. All hooks are fail-open: a governance error never blocks the agent.
+turn, one check-in per completed assistant turn (a fixed marker plus numeric
+tool counts, never conversation text), and presence release on finalize or
+reset. A new Hermes process on an existing session, a compressed session, or a
+subagent onboards as the linked successor/child of the earlier identity. All
+hooks are fail-open: a governance error never blocks the agent.
 """
 
 from __future__ import annotations
