@@ -19,6 +19,7 @@ import json
 import logging
 import os
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import anyio
 from mcp.client.session import ClientSession
@@ -26,7 +27,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 from mcp.types import PaginatedRequestParams
 
-from unitares_host_adapter.types import MissingServerURLError
+from unitares_host_adapter.types import MissingServerURLError, ServerRejectedHostError
 
 MCP_URL_ENV = "UNITARES_MCP_URL"
 _LOGGER = logging.getLogger(__name__)
@@ -46,6 +47,34 @@ def mcp_url_from_env() -> str:
             "e.g. http://127.0.0.1:8767/mcp/"
         )
     return url
+
+
+def _host_of(mcp_url: str) -> str:
+    """The Host this client connects as, from the configured URL (no userinfo)."""
+    parts = urlsplit(mcp_url)
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    return f"{host}:{parts.port}" if parts.port else host
+
+
+def _external_cancels() -> int:
+    """Pending cancellation requests on the current task from outside it."""
+    task = asyncio.current_task()
+    return task.cancelling() if task is not None else 0
+
+
+def _is_refusal_fallout(exc: BaseException, host_rejected: bool, external_cancels: int) -> bool:
+    """Whether ``exc`` is how the MCP client surfaced a 421 it received.
+
+    A real cancellation of this task (``external_cancels > 0``), a keyboard
+    interrupt or an exit always propagates unchanged.
+    """
+    if not host_rejected:
+        return False
+    if isinstance(exc, asyncio.CancelledError):
+        return external_cancels == 0
+    return isinstance(exc, Exception)
 
 
 class TransportError(RuntimeError):
@@ -75,6 +104,7 @@ class StreamableHTTPTransport:
         self._http_client: Optional[Any] = None
         self._cm_stack: list[Any] = []
         self._lifecycle_scope: anyio.CancelScope | None = None
+        self._host_rejected = False
 
     @classmethod
     def from_env(cls, **kwargs: Any) -> "StreamableHTTPTransport":
@@ -115,8 +145,10 @@ class StreamableHTTPTransport:
         lifecycle_scope = anyio.CancelScope()
         lifecycle_scope.__enter__()
         self._lifecycle_scope = lifecycle_scope
+        self._host_rejected = False
         try:
             self._http_client = create_mcp_http_client(headers=self._headers())
+            self._watch_for_host_rejection(self._http_client)
             cm = streamable_http_client(self.mcp_url, http_client=self._http_client)
             streams = await cm.__aenter__()
             self._cm_stack.append(cm)
@@ -128,12 +160,34 @@ class StreamableHTTPTransport:
             # covered by httpx's timeout and would block until the caller's outer
             # timeout cancels the whole task.
             await asyncio.wait_for(self._session.initialize(), self.connect_timeout)
-        except BaseException:
+        except BaseException as exc:
             try:
                 await self.aclose()
             except BaseException:
                 pass
+            if _is_refusal_fallout(exc, self._host_rejected, _external_cancels()):
+                # The MCP client drops the status of a non-2xx reply: MCP 2 raises
+                # a generic error, MCP 1 tears the session down with a cancellation.
+                # Name the fix instead. Built from local config only.
+                raise ServerRejectedHostError(
+                    f"the UNITARES server refused Host {_host_of(self.mcp_url)!r} (HTTP 421); "
+                    "add it to the server's UNITARES_MCP_ALLOWED_HOSTS"
+                ) from exc
             raise
+
+    def _watch_for_host_rejection(self, http_client: Any) -> None:
+        """Note a 421 from the server, which is how UNITARES refuses an unlisted Host."""
+
+        async def on_response(response: Any) -> None:
+            if response.status_code == 421:
+                self._host_rejected = True
+
+        current = getattr(http_client, "event_hooks", None)
+        if current is None:
+            return  # a client without hooks just loses the hint
+        hooks = dict(current)
+        hooks["response"] = [*hooks.get("response", []), on_response]
+        http_client.event_hooks = hooks
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._session is None:

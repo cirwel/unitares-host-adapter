@@ -13,8 +13,8 @@ import pytest
 from mcp.types import CallToolResult, TextContent
 
 from unitares_host_adapter import StreamableHTTPTransport, TransportError, UnitaresAdapter
-from unitares_host_adapter.transport import _parse_result
-from unitares_host_adapter.types import MissingServerURLError
+from unitares_host_adapter.transport import _host_of, _is_refusal_fallout, _parse_result
+from unitares_host_adapter.types import MissingServerURLError, ServerRejectedHostError
 
 
 def _content(*texts: str) -> SimpleNamespace:
@@ -469,3 +469,100 @@ async def test_context_exit_does_not_retry_a_completed_mutation_on_cleanup_error
 
     assert await t.__aexit__(None, None, None) is False
     assert "cleanup failed after MCP operation" in caplog.text
+
+
+# --- refused Host (HTTP 421) --------------------------------------------------
+
+def _serve_status(status: int):
+    """A local HTTP server that answers every request with ``status``."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Handler(BaseHTTPRequestHandler):
+        def _reply(self) -> None:
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+            body = b"Invalid Host header"
+            self.send_response(status)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_POST = do_GET = do_DELETE = _reply
+
+        def log_message(self, *args: Any) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.mark.parametrize(
+    ("url", "host"),
+    [
+        ("http://governance-mcp:8767/mcp/", "governance-mcp:8767"),
+        ("https://user:pw@gov.example.org/mcp/", "gov.example.org"),
+        ("http://[::1]:8767/mcp/", "[::1]:8767"),
+    ],
+)
+def test_host_of_is_the_connect_host_without_userinfo(url: str, host: str) -> None:
+    assert _host_of(url) == host
+
+
+def test_refused_host_names_the_host_and_the_server_setting() -> None:
+    server = _serve_status(421)
+    port = server.server_address[1]
+    try:
+        async def connect() -> None:
+            async with StreamableHTTPTransport(
+                f"http://127.0.0.1:{port}/mcp/", connect_timeout=5, call_timeout=5
+            ) as transport:
+                await transport.list_tools()
+
+        with pytest.raises(ServerRejectedHostError) as raised:
+            asyncio.run(connect())
+    finally:
+        server.shutdown()
+
+    message = str(raised.value)
+    assert f"127.0.0.1:{port}" in message
+    assert "UNITARES_MCP_ALLOWED_HOSTS" in message
+    assert "Invalid Host header" not in message  # server text never reaches the message
+
+
+def test_other_http_errors_are_not_reported_as_a_refused_host() -> None:
+    server = _serve_status(500)
+    port = server.server_address[1]
+    try:
+        async def connect() -> None:
+            async with StreamableHTTPTransport(
+                f"http://127.0.0.1:{port}/mcp/", connect_timeout=5, call_timeout=5
+            ) as transport:
+                await transport.list_tools()
+
+        # MCP 1 surfaces a non-2xx as a cancellation, MCP 2 as an error.
+        with pytest.raises(BaseException) as raised:
+            asyncio.run(connect())
+    finally:
+        server.shutdown()
+
+    assert not isinstance(raised.value, ServerRejectedHostError)
+
+
+@pytest.mark.parametrize(
+    ("exc", "host_rejected", "external_cancels", "expected"),
+    [
+        (RuntimeError("generic MCP error"), True, 0, True),  # MCP 2 shape
+        (asyncio.CancelledError(), True, 0, True),  # MCP 1 shape: teardown, not a real cancel
+        (asyncio.CancelledError(), True, 1, False),  # this task is really being cancelled
+        (KeyboardInterrupt(), True, 0, False),
+        (SystemExit(), True, 0, False),
+        (RuntimeError("no 421 seen"), False, 0, False),
+        (asyncio.CancelledError(), False, 0, False),
+    ],
+)
+def test_only_421_fallout_is_reported_as_a_refused_host(
+    exc: BaseException, host_rejected: bool, external_cancels: int, expected: bool
+) -> None:
+    assert _is_refusal_fallout(exc, host_rejected, external_cancels) is expected

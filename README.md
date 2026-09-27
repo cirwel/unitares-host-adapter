@@ -58,7 +58,7 @@ To wire it by hand instead, or to opt into the per-tool modes, use a normal Herm
 ```yaml
 # ~/.hermes/plugins/unitares/plugin.yaml
 name: unitares
-version: 0.3.1
+version: 0.3.2
 description: UNITARES governance lifecycle adapter for Hermes
 provides_hooks:
   - pre_llm_call

@@ -5,17 +5,21 @@ from unitares_host_adapter.transport import StreamableHTTPTransport, TransportEr
 from unitares_host_adapter.types import (
     AnnotatedResult,
     BlockDirective,
+    LocalConfigError,
     MissingServerURLError,
+    ServerRejectedHostError,
     Verdict,
 )
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 __all__ = [
     "UnitaresAdapter",
     "StreamableHTTPTransport",
     "TransportError",
+    "LocalConfigError",
     "MissingServerURLError",
+    "ServerRejectedHostError",
     "Verdict",
     "BlockDirective",
     "AnnotatedResult",

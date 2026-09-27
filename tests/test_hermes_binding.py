@@ -394,6 +394,25 @@ def test_missing_server_url_warning_names_the_variable(caplog) -> None:
     assert "MissingServerURLError: UNITARES_MCP_URL is not set" in caplog.text
 
 
+def test_refused_host_warning_names_the_fix(caplog) -> None:
+    from unitares_host_adapter.types import ServerRejectedHostError
+
+    ctx = FakeCtx()
+
+    def factory() -> FakeAdapter:
+        raise ServerRejectedHostError(
+            "the UNITARES server refused Host 'governance-mcp:8767' (HTTP 421); "
+            "add it to the server's UNITARES_MCP_ALLOWED_HOSTS"
+        )
+
+    register(ctx, adapter_factory=factory)
+    with caplog.at_level("WARNING", logger="unitares_host_adapter.bindings.hermes"):
+        ctx.hooks["pre_llm_call"](session_id="refused", model="m", platform="cli")
+
+    assert "ServerRejectedHostError: the UNITARES server refused Host 'governance-mcp:8767'" in caplog.text
+    assert "UNITARES_MCP_ALLOWED_HOSTS" in caplog.text
+
+
 def test_other_factory_errors_are_logged_by_type_only(caplog) -> None:
     ctx = FakeCtx()
 

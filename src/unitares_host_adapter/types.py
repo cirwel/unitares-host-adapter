@@ -49,9 +49,25 @@ class AnnotatedResult:
         return f"{self.result}\n\n---\n[UNITARES] {self.annotation}"
 
 
-class MissingServerURLError(RuntimeError):
+class LocalConfigError(RuntimeError):
+    """A configuration problem the operator can fix on their side.
+
+    The message is built locally from local configuration and never carries
+    server text, so bindings may log it verbatim.
+    """
+
+
+class MissingServerURLError(LocalConfigError):
     """Raised when no UNITARES server URL is configured.
 
-    Its message is built locally and names only the environment variable, so
-    bindings may log it verbatim.
+    Its message names only the environment variable.
+    """
+
+
+class ServerRejectedHostError(LocalConfigError):
+    """Raised when the server refuses the Host this client connects as (HTTP 421).
+
+    UNITARES validates the Host header on ``/mcp`` against
+    ``UNITARES_MCP_ALLOWED_HOSTS``. The message names the host taken from the
+    configured URL and the server setting that admits it.
     """
