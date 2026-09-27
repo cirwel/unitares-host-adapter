@@ -72,7 +72,8 @@ def test_registers_default_hermes_lifecycle_hooks_without_tool_hooks() -> None:
     assert "on_session_finalize" in ctx.hooks
     assert "on_session_end" not in ctx.hooks
     assert "pre_tool_call" not in ctx.hooks
-    assert "post_tool_call" not in ctx.hooks
+    # post_tool_call is registered by default, but only counts locally.
+    assert "post_tool_call" in ctx.hooks
     assert "transform_tool_result" not in ctx.hooks
 
 

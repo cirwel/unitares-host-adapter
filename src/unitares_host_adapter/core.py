@@ -56,6 +56,8 @@ class UnitaresAdapter:
         # and lands on a sibling identity (or is refused), so onboarding alone
         # is not enough — the proof must be threaded through.
         self._client_session_id: Optional[str] = None
+        self._agent_uuid: Optional[str] = None
+        self._release_unsupported = False
         self._available_tools: Optional[set[str]] = None
 
     @property
@@ -66,25 +68,83 @@ class UnitaresAdapter:
     def client_session_id(self) -> Optional[str]:
         return self._client_session_id
 
-    async def on_session_start(self, session_id: str, *, purpose: str = "", **_: Any) -> None:
-        """Mint governance identity for a new host session. Host-agnostic lifecycle entry point."""
+    @property
+    def agent_uuid(self) -> Optional[str]:
+        """UUID of the identity minted by the last ``on_session_start``, if reported."""
+        return self._agent_uuid
+
+    async def on_session_start(
+        self,
+        session_id: str,
+        *,
+        purpose: str = "",
+        parent_agent_id: Optional[str] = None,
+        spawn_reason: Optional[str] = None,
+        **_: Any,
+    ) -> None:
+        """Mint governance identity for a new host session. Host-agnostic lifecycle entry point.
+
+        ``parent_agent_id`` + ``spawn_reason`` declare lineage to a predecessor
+        identity (for example ``"compaction"`` when the host compressed its
+        context into a new session). The server records the declaration as
+        provisional lineage; it never transfers proof, so this is not a resume.
+        """
         await self._ensure_tools(REQUIRED_LIFECYCLE_TOOLS)
-        raw = await self._transport.call_tool(
-            self._onboard_tool(),
-            {
-                "name": self._agent_label or f"host-session:{session_id}",
-                "model_type": self._model_type,
-                "client_hint": purpose or f"host-session:{session_id}",
-                "force_new": True,
-            },
-        )
+        arguments: dict[str, Any] = {
+            "name": self._agent_label or f"host-session:{session_id}",
+            "model_type": self._model_type,
+            "client_hint": purpose or f"host-session:{session_id}",
+            "force_new": True,
+        }
+        if parent_agent_id and spawn_reason:
+            arguments["parent_agent_id"] = parent_agent_id
+            arguments["spawn_reason"] = spawn_reason
+        raw = await self._transport.call_tool(self._onboard_tool(), arguments)
         self._session_id = session_id
         self._client_session_id = _find(raw, "client_session_id")
+        self._agent_uuid = _find(raw, "agent_uuid")
 
     async def on_session_end(self, session_id: str, **_: Any) -> None:
         """Optional final check-in on session close. No-op if not supported by the host."""
         self._session_id = None
         self._client_session_id = None
+        self._agent_uuid = None
+
+    async def release_presence(self) -> bool:
+        """Tell the server this identity's process has exited; ``True`` when released.
+
+        ``agent(action="release_presence")`` exists only on newer servers, and
+        actions are not listed in tools/list, so this is best effort: any
+        refusal or error marks it unsupported for this adapter and returns
+        ``False`` without raising. It is never retried.
+        """
+        if self._release_unsupported or not self._client_session_id:
+            return False
+        try:
+            if self._available_tools is None:
+                self._available_tools = await self._transport.list_tools()
+            available = self._available_tools
+            if "agent" in available:
+                raw = await self._transport.call_tool(
+                    "agent", self._bind({"action": "release_presence"})
+                )
+            elif "use_tool" in available:
+                raw = await self._transport.call_tool(
+                    "use_tool",
+                    self._bind(
+                        {"tool_name": "agent", "arguments": {"action": "release_presence"}}
+                    ),
+                )
+            else:
+                self._release_unsupported = True
+                return False
+        except Exception:
+            self._release_unsupported = True
+            return False
+        released = isinstance(raw, dict) and raw.get("released") is True
+        if not released:
+            self._release_unsupported = True
+        return released
 
     def _bind(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Echo the captured client_session_id into a call's arguments, if known."""
@@ -123,14 +183,26 @@ class UnitaresAdapter:
         complexity: float = 0.3,
         epistemic_class: Optional[str] = None,
         provenance_context: Optional[dict[str, Any]] = None,
+        afferents: Optional[dict[str, float]] = None,
     ) -> Verdict:
-        """Mode 1: Explicit delivery. Agent initiates a check-in."""
+        """Mode 1: Explicit delivery. Agent initiates a check-in.
+
+        ``afferents`` are numeric host measurements sent as
+        ``sensor_data.afferents``; the server records them as measurement-only
+        telemetry. Non-numeric values are dropped here, so text cannot ride
+        along.
+        """
         await self._ensure_tools({"sync_state"})
         arguments: dict[str, Any] = {
             "response_text": purpose,
             "complexity": complexity,
             **_mode_args(response_mode),
         }
+        numeric = _numeric_afferents(afferents)
+        if numeric:
+            arguments["sensor_data"] = {
+                "afferents": {"values": numeric, "provenance": dict(_AFFERENT_PROVENANCE)}
+            }
         if confidence is not None:
             arguments["confidence"] = confidence
         if epistemic_class is not None:
@@ -311,6 +383,38 @@ def _mode_args(mode: "ResponseMode") -> dict[str, str]:
     The server accepts response_mode in {minimal, compact, standard, full,
     mirror, auto}; the adapter's "lite" is its alias for "minimal"."""
     return {"response_mode": "minimal" if mode == "lite" else mode}
+
+
+_MAX_AFFERENTS = 16
+# Declared inline so the server records what these numbers are instead of
+# "undeclared". Host-side counters, not a body or physical sensor.
+_AFFERENT_PROVENANCE = {
+    "schema": "unitares_host_adapter.turn_counts.v1",
+    "source": "host_adapter",
+    "role": "host_turn_counters",
+    "units": "count|ms",
+}
+
+
+def _numeric_afferents(values: Optional[dict[str, Any]]) -> dict[str, float]:
+    """Keep at most 16 finite numeric values under short identifier keys."""
+    if not isinstance(values, dict):
+        return {}
+    kept: dict[str, float] = {}
+    for key, value in values.items():
+        if len(kept) >= _MAX_AFFERENTS:
+            break
+        if not isinstance(key, str) or not _AFFERENT_KEY.fullmatch(key):
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if value != value or value in (float("inf"), float("-inf")):
+            continue
+        kept[key] = value
+    return kept
+
+
+_AFFERENT_KEY = re.compile(r"[a-z][a-z0-9_]{0,47}")
 
 
 def _find(obj: Any, key: str) -> Optional[str]:
