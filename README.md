@@ -111,6 +111,7 @@ description: UNITARES governance lifecycle adapter for Hermes
 provides_hooks:
   - pre_llm_call
   - post_llm_call
+  - post_tool_call
   - on_session_start
   - on_session_finalize
   - on_session_reset
@@ -209,6 +210,7 @@ Bindings are landing in this order:
 - [x] Hermes binding: lazy first-turn onboard + turn-level check-in
 - [x] Hermes opt-in gated / ambient / outcome hooks
 - [x] Hermes directory plugin (`hermes plugins install cirwel/unitares-host-adapter`)
+- [x] Hermes session continuity: compaction / resume / subagent lineage, presence release, per-turn counts
 - [x] OpenAI-compatible governance proxy (transport-level binding; any client)
 - [ ] Claude Code binding
 - [ ] Goose binding
