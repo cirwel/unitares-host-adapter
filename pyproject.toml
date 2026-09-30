@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unitares-host-adapter"
-version = "0.3.2"
-description = "Thin client bindings that mount UNITARES governance into agent hosts (Hermes, Claude Code, Goose, ...)"
+version = "0.3.3"
+description = "Host integrations for UNITARES accountability infrastructure: Hermes Agent and OpenAI-compatible clients"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [
     { name = "Kenny Wang", email = "hikewa@gmail.com" },
 ]
 requires-python = ">=3.11"
-keywords = ["unitares", "governance", "mcp", "agent", "hermes", "claude-code", "goose"]
+keywords = ["unitares", "governance", "mcp", "agent", "hermes"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: Apache Software License",

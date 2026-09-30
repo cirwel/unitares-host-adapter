@@ -238,24 +238,65 @@ class UnitaresAdapter:
 
     @staticmethod
     def _verdict_from_raw(raw: dict[str, Any]) -> Verdict:
-        # process_agent_update returns verdict as a dict: {"value": "proceed",
-        # "meaning": ..., "next_action": ...}, with margin at the top level.
-        # Fall back to a bare string / top-level action for other shapes.
-        verdict = raw.get("verdict")
-        if isinstance(verdict, dict):
-            action = verdict.get("value") or verdict.get("action") or "proceed"
-            message = (
-                verdict.get("meaning")
-                or verdict.get("next_action")
-                or raw.get("guidance")
-                or raw.get("message")
-                or ""
+        # Friendly aliases put the final policy decision in action_summary.
+        # Its action outranks advisory verdicts, including cold-start pauses
+        # deferred by policy. Older servers return canonical payloads instead.
+        # Once paused, the server refuses new check-ins before producing a
+        # decision envelope. This typed policy refusal is not a network error.
+        if raw.get("error_code") == "AGENT_PAUSED":
+            return Verdict(action="pause", message=raw.get("error") or "Agent is paused", raw=raw)
+        if raw.get("success") is False or "error" in raw:
+            raise ValueError("UNITARES response contains no supported policy action")
+        source = raw
+        summary = raw.get("action_summary")
+        summary = summary if isinstance(summary, dict) else {}
+        state = raw.get("state_summary")
+        state = state if isinstance(state, dict) else {}
+        action = summary.get("action") or state.get("action")
+        sub_action = summary.get("sub_action") or state.get("sub_action")
+        message = summary.get("reason") or raw.get("next_action") or ""
+        margin = state.get("margin") or raw.get("margin")
+        if not action:
+            nested = raw.get("raw_governance")
+            if isinstance(nested, dict):
+                source = nested
+            decision = source.get("decision")
+            decision = decision if isinstance(decision, dict) else {}
+            verdict = source.get("verdict")
+            verdict_obj = verdict if isinstance(verdict, dict) else {}
+            action = (
+                decision.get("action")
+                or verdict_obj.get("decision_action")
+                or source.get("action")
+                or verdict_obj.get("action")
+                or verdict_obj.get("value")
+                or (verdict if isinstance(verdict, str) else None)
             )
-            margin = raw.get("margin") or verdict.get("margin")
-        else:
-            action = (verdict if isinstance(verdict, str) else None) or raw.get("action") or "proceed"
-            message = raw.get("message") or raw.get("guidance") or ""
-            margin = raw.get("margin")
+            sub_action = decision.get("sub_action") or source.get("sub_action")
+            message = (
+                decision.get("reason")
+                or verdict_obj.get("meaning")
+                or verdict_obj.get("next_action")
+                or source.get("guidance")
+                or source.get("message")
+                or message
+            )
+            margin = margin or decision.get("margin") or source.get("margin") or verdict_obj.get("margin")
+
+        aliases = {
+            "approve": "proceed", "continue": "proceed", "healthy": "proceed",
+            "ok": "proceed", "safe": "proceed", "resumed": "proceed",
+            "not_paused": "proceed", "caution": "guide", "block": "pause",
+            "high-risk": "pause", "stop": "pause",
+        }
+        action = str(action).strip().lower() if action is not None else ""
+        action = aliases.get(action, action)
+        if action == "proceed" and sub_action == "guide":
+            action = "guide"
+        if action not in {"proceed", "guide", "pause", "reject"}:
+            # Bindings already handle errors fail-open. Do not manufacture a
+            # successful governance decision from an unrecognized response.
+            raise ValueError("UNITARES response contains no supported policy action")
         return Verdict(
             action=action,  # type: ignore[arg-type]
             message=message,

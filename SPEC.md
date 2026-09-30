@@ -3,23 +3,25 @@
 **Version:** 0.1 (draft)
 **Status:** Pre-release. Signatures may change before 1.0.
 
-This spec defines how UNITARES governance is delivered into an AI-agent host. It is host-agnostic: any host that implements three named integration points can carry UNITARES governance with no custom code beyond a binding.
+This spec defines how host bindings connect agent lifecycle checkpoints to UNITARES, self-hosted accountability infrastructure for long-running AI agents. The server connects process identities, claims, evidence, governed reviews, and outcomes in an operator-owned record. A binding maps supported host hooks to selected server operations.
 
-## Primitive: digital proprioception
+## Server and adapter responsibilities
 
-UNITARES treats agent self-state (energy, information integrity, entropy, void — the EISV vector), verdicts (`proceed` / `guide` / `pause` / `reject`), coherence, and calibration as **proprioceptive signals**: information an agent consumes about itself so it can adjust behavior. This primitive is owned by UNITARES and served via the governance MCP. This spec defines only the delivery surface; the primitive itself is documented in the UNITARES paper and governance-fundamentals skill.
+The server owns the durable record and returns runtime policy actions, reasons, and next steps. Its [EISV proprioception model](https://github.com/cirwel/unitares/blob/master/docs/ontology/eisv-proprioception-contract.md) makes changes in an agent process visible for diagnosis and action with evidence. A state estimate or policy action does not establish that a task succeeded; outcomes need their own supporting observations.
 
-## Three delivery modes
+The adapter supplies lifecycle reporting and optional ways to deliver policy responses to the host or agent. It does not automatically publish claims and evidence, conduct reviews, or reconstruct earlier work. See the [UNITARES README](https://github.com/cirwel/unitares#readme) for the broader product and [evidence and limits](https://github.com/cirwel/unitares/blob/master/docs/EVIDENCE_AND_LIMITS.md) for the status of its claims.
 
-UNITARES proprioception reaches an agent through exactly three modes, named and depth-controlled here:
+## Library delivery modes
+
+The library supports three ways to request or deliver a server policy response. Default automatic turn reporting is described separately under [Session lifecycle](#session-lifecycle); it does not inject a response into the conversation.
 
 ### 1. Explicit
 
-The agent initiates. It calls `checkin`, `knowledge`, `dialectic`, or a similar tool via MCP and receives a response.
+The agent initiates. It calls `sync_state`, `search_shared_memory`, `request_review`, or another server tool via MCP and receives a response.
 
 - **Trigger:** agent-initiated MCP tool call.
 - **Depth control:** the `response_mode` parameter on the UNITARES MCP server: `minimal` / `compact` / `standard` / `full` / `auto`.
-- **Host requirements:** MCP client support. Every agentskills.io-compatible host with MCP has this today.
+- **Host requirements:** An MCP client configured for the operator's server.
 - **Semantics:** agent sees only what it asks for. No surprise annotations.
 
 ### 2. Ambient
@@ -29,7 +31,7 @@ The host injects governance state into tool results the agent did not explicitly
 - **Trigger:** host-side hook on tool-result delivery, fired on every tool call (or a filtered subset).
 - **Depth control:** same `response_mode` parameter, default `lite` / `minimal`. Ambient mode SHOULD default to shallow depth to avoid flooding the agent with state it did not ask for.
 - **Host requirements:** a `transform_tool_result` (or equivalent) lifecycle hook on the host side that can mutate tool output before the agent reads it.
-- **Semantics:** agent consumes its own EISV/verdict as context on *every* tool result, making governance feel continuous rather than interrogative. This is the surface digital proprioception is most naturally carried on.
+- **Semantics:** the agent sees a policy annotation alongside the tool result. Annotation content and frequency depend on the binding and response depth.
 
 ### 3. Gated
 
@@ -48,12 +50,12 @@ The host refuses a tool call when UNITARES returns a blocking verdict.
 
 | UNITARES verdict | Explicit response | Ambient annotation | Gated block |
 |---|---|---|---|
-| `proceed` | Returns full verdict object | Lite annotation appended | No block |
-| `guide` | Returns verdict + guidance | Guidance prepended to result | No block (guide is advisory) |
-| `pause` | Returns verdict + reason | Warning prepended | **Blocks** with `pause` message |
-| `reject` | Returns verdict + reason | N/A (call is blocked before result) | **Blocks** with `reject` message |
+| `proceed` | Returns policy response at requested depth | Annotation when margin is present | No block |
+| `guide` | Returns verdict + guidance | Guidance appended to result | No block (guide is advisory) |
+| `pause` | Returns verdict + reason | Pause annotation appended | **Blocks** with `pause` message |
+| `reject` | Returns verdict + reason | Reject annotation appended if result delivery runs | **Blocks** with `reject` message |
 
-Hosts SHOULD implement all three modes if their lifecycle hooks permit it. Hosts MAY implement a subset; partial implementations are valid and should be declared in the host binding.
+Bindings MAY implement a subset, declared according to the host hooks they support. Gated and ambient calls each submit a check-in; they are not read-only state inspections. The current Hermes binding is fail-open on server or transport errors, while typed `AGENT_PAUSED` refusals remain blocking.
 
 ## Binding responsibilities
 
@@ -77,7 +79,7 @@ Bindings SHOULD also wire these lifecycle events when the host exposes them:
 | UNITARES call | Host hook | Purpose |
 |---|---|---|
 | `onboard` or `start_session` | session-start / first turn | Mint governance identity for the new agent session |
-| `outcome_event` | post-tool-call | Feed calibration ground truth |
+| `record_result` | opt-in post-tool-call | Report host-observed success/failure; associate a prediction ID when grading a prediction |
 | (none — local close in Hermes 0.3.x) | session finalize / reset | Clear local session binding and failure state |
 
 Hermes 0.3.x defaults to automatic turn reporting: one fresh identity for each active host session and one `sync_state` marker per completed turn. This is host observation, not ambient delivery: the returned verdict is not injected into the conversation. Tool gating, result annotations, and outcome reporting are disabled unless explicitly registered by a custom plugin. Default session close is local only; persisted resume/compaction/subagent lineage and server presence release are not implemented in 0.3.x. See the [Hermes setup guide](./README.md#hermes-agent) for the shipped behavior, disclosure, and hook declarations.
@@ -106,4 +108,4 @@ Bindings SHOULD pin to a MAJOR version of the spec.
 - `unitares_host_adapter.bindings.hermes` — Hermes Agent lifecycle binding, loaded by a thin Hermes user plugin.
 - `unitares_host_adapter.bindings.openai_proxy` — transport-level binding for OpenAI-compatible clients (`uhaa-proxy`).
 
-Not yet built in this package: Claude Code, Goose, and generic-MCP bindings. Claude Code lifecycle hooks are currently provided by the separate [`unitares-governance`](https://github.com/cirwel/unitares-governance-plugin) plugin; any MCP-capable host can use explicit mode with no binding.
+Claude Code and Codex lifecycle hooks are provided by the separate [`unitares-governance`](https://github.com/cirwel/unitares-governance-plugin) plugin; any MCP-capable host can use explicit mode with no binding.
