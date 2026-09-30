@@ -80,9 +80,9 @@ Bindings SHOULD also wire these lifecycle events when the host exposes them:
 |---|---|---|
 | `onboard` or `start_session` | session-start / first turn | Mint governance identity for the new agent session |
 | `record_result` | opt-in post-tool-call | Report host-observed success/failure; associate a prediction ID when grading a prediction |
-| (none — local close in Hermes 0.3.x) | session finalize / reset | Clear local session binding and failure state |
+| `agent` / `use_tool` (when supported) | session finalize / reset in the continuity candidate | Release presence, then clear local session binding and failure state |
 
-Hermes 0.3.x defaults to automatic turn reporting: one fresh identity for each active host session and one `sync_state` marker per completed turn. This is host observation, not ambient delivery: the returned verdict is not injected into the conversation. Tool gating, result annotations, and outcome reporting are disabled unless explicitly registered by a custom plugin. Default session close is local only; persisted resume/compaction/subagent lineage and server presence release are not implemented in 0.3.x. See the [Hermes setup guide](./README.md#hermes-agent) for the shipped behavior, disclosure, and hook declarations.
+Hermes 0.3.x defaults to automatic turn reporting: one fresh identity for each active host session and one `sync_state` marker per completed turn. This is host observation, not ambient delivery: the returned verdict is not injected into the conversation. Tool gating, result annotations, and outcome reporting are disabled unless explicitly registered by a custom plugin. Default session close is local only in 0.3.x. The unpublished 0.4.0a1 candidate adds persisted lineage, optional server presence release, and locally counted numeric turn afferents. It onboards at the first turn after Hermes has supplied parent metadata; in-place compaction retains the identity. See the [Hermes setup guide](./README.md#hermes-agent) for the shipped behavior, disclosure, and hook declarations.
 
 ## Non-goals
 

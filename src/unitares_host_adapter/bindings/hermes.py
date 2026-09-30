@@ -584,7 +584,11 @@ def register(
         return annotated.render() if annotated.annotation else result
 
     def on_session_start(**kwargs: Any) -> None:
-        _ensure_session(**kwargs)
+        # Hermes fires this before inserting the session row and omits parent
+        # metadata. Minting here would permanently lose child lineage: later
+        # hooks see an already-bound session and cannot amend its declaration.
+        # pre_llm_call runs after row creation and supplies parent_session_id.
+        # A session opened without a turn therefore creates no server identity.
         return None
 
     def _close_session(**kwargs: Any) -> None:

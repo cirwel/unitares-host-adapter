@@ -1,8 +1,8 @@
 manifest_version: 1
 name: unitares
 kind: standalone
-version: 0.3.3
-description: "Records each Hermes session on a UNITARES server you run: one identity per session and one check-in per completed turn. Fail-open; never blocks the agent."
+version: 0.4.0a1
+description: "Records each Hermes session on a UNITARES server you run: linked session identities and one check-in per completed turn with numeric tool counts and durations. Fail-open; never blocks the agent."
 author: Kenny Wang
 license: Apache-2.0
 homepage: https://github.com/cirwel/unitares-host-adapter
@@ -19,6 +19,7 @@ optional_env:
 provides_hooks:
   - pre_llm_call
   - post_llm_call
+  - post_tool_call
   - on_session_start
   - on_session_finalize
   - on_session_reset

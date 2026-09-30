@@ -251,3 +251,56 @@ def test_default_post_tool_call_makes_no_network_call(tmp_path: Path) -> None:
     before = list(adapters[0].events)
     ctx.hooks["post_tool_call"](session_id="s1", tool_name="terminal", status="ok", duration_ms=5)
     assert adapters[0].events == before
+
+
+def test_startup_before_db_insert_defers_child_onboarding(tmp_path: Path) -> None:
+    # Actual Hermes ordering: startup omits the parent and precedes row creation.
+    rows = {}
+    ctx, adapters, _ = _setup(tmp_path, lookup=rows.get)
+    ctx.hooks["pre_llm_call"](session_id="parent", model="m", platform="cli")
+    parent_uuid = adapters[0].agent_uuid
+    ctx.hooks["on_session_start"](session_id="child", model="m", platform="subagent")
+    assert len(adapters) == 1
+    rows["child"] = {"parent_session_id": "parent"}
+    ctx.hooks["pre_llm_call"](
+        session_id="child", model="m", platform="subagent", parent_session_id="parent"
+    )
+    assert _start_kwargs(adapters[1])["parent_agent_id"] == parent_uuid
+    assert _start_kwargs(adapters[1])["spawn_reason"] == "subagent"
+    assert adapters[0].released == 0
+    ctx.hooks["pre_llm_call"](session_id="child", model="m", platform="subagent")
+    assert len(adapters) == 2  # no second mint on later turns
+
+
+def test_startup_before_rotation_row_preserves_compaction_reason(tmp_path: Path) -> None:
+    rows = {}
+    ctx, adapters, _ = _setup(tmp_path, lookup=rows.get)
+    ctx.hooks["pre_llm_call"](session_id="parent", model="m", platform="cli")
+    parent_uuid = adapters[0].agent_uuid
+    ctx.hooks["on_session_start"](session_id="child", model="m", platform="cli")
+    assert len(adapters) == 1
+    rows["child"] = {"parent_session_id": "parent", "parent_end_reason": "compression"}
+    ctx.hooks["pre_llm_call"](session_id="child", model="m", platform="cli")
+    assert _start_kwargs(adapters[1])["parent_agent_id"] == parent_uuid
+    assert _start_kwargs(adapters[1])["spawn_reason"] == "compaction"
+    assert adapters[0].released == 1
+
+
+def test_open_and_close_without_turn_never_mints_identity(tmp_path: Path) -> None:
+    ctx, adapters, links = _setup(tmp_path)
+    ctx.hooks["on_session_start"](session_id="empty", model="m", platform="cli")
+    ctx.hooks["on_session_finalize"](session_id="empty")
+    assert adapters == []
+    assert links.get("empty") is None
+
+
+def test_in_place_compaction_keeps_identity(tmp_path: Path) -> None:
+    ctx, adapters, _ = _setup(tmp_path)
+    ctx.hooks["pre_llm_call"](session_id="same", model="m", platform="cli")
+    uuid = adapters[0].agent_uuid
+    # A rebuilt prompt can fire startup again without creating a child session.
+    ctx.hooks["on_session_start"](session_id="same", model="m", platform="cli")
+    ctx.hooks["pre_llm_call"](session_id="same", model="m", platform="cli")
+    assert len(adapters) == 1
+    assert adapters[0].agent_uuid == uuid
+    assert adapters[0].released == 0
