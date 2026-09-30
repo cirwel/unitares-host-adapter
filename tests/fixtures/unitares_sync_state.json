@@ -1,0 +1,815 @@
+{
+  "source_repository": "https://github.com/cirwel/unitares",
+  "source_revision": "f5cb44268e63247e31ec99ea7dca816e931a8e91",
+  "builder": "src.mcp_handlers.middleware.envelope_step.build_experience_envelope",
+  "invocation": [
+    "sync_state",
+    "process_agent_update",
+    "payload",
+    "arguments"
+  ],
+  "cases": [
+    {
+      "name": "minimal-proceed",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "proceed",
+          "reason": "Contract proceed",
+          "margin": "tight"
+        },
+        "verdict": {
+          "value": "proceed",
+          "meaning": "Contract proceed"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "proceed"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "minimal"
+      },
+      "arguments": {
+        "response_mode": "minimal"
+      },
+      "expected_action": "proceed",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "verdict": "proceed",
+          "reason": "Contract proceed",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working; sync_state after your next substantial step. When an outcome lands, pass this prediction_id to record_result so it grades this check-in.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "proceed",
+          "margin": "tight"
+        },
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "minimal-guide",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "proceed",
+          "reason": "Contract guide",
+          "margin": "tight",
+          "sub_action": "guide"
+        },
+        "verdict": {
+          "value": "guide",
+          "meaning": "Contract guide"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "guide"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "minimal"
+      },
+      "arguments": {
+        "response_mode": "minimal"
+      },
+      "expected_action": "guide",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "sub_action": "guide",
+          "verdict": "guide",
+          "reason": "Contract guide",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working; sync_state after your next substantial step. When an outcome lands, pass this prediction_id to record_result so it grades this check-in.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "proceed",
+          "margin": "tight",
+          "sub_action": "guide"
+        },
+        "recovery_hint": "Verdict is advisory rather than a threshold warning - read the guidance text, sync_state after the next substantial step, and use self_recovery(action='review', reflection='...') only if work stalls.",
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "minimal-pause",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "pause",
+          "reason": "Contract pause",
+          "margin": "tight"
+        },
+        "verdict": {
+          "value": "pause",
+          "meaning": "Contract pause"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "pause"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "minimal"
+      },
+      "arguments": {
+        "response_mode": "minimal"
+      },
+      "expected_action": "pause",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "pause",
+          "verdict": "pause",
+          "reason": "Contract pause",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Paused - stop this line of work and do not continue it. Call self_recovery(action='review', reflection='...') to request resumption.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "pause",
+          "margin": "tight"
+        },
+        "recovery_hint": "Working state looks degraded - pause and call self_recovery(action='review', reflection='...') before continuing.",
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "compact-proceed",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "proceed",
+          "reason": "Contract proceed",
+          "margin": "tight"
+        },
+        "verdict": {
+          "value": "proceed",
+          "meaning": "Contract proceed"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "proceed"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "compact"
+      },
+      "arguments": {
+        "response_mode": "compact"
+      },
+      "expected_action": "proceed",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "verdict": "proceed",
+          "reason": "Contract proceed",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working; sync_state after your next substantial step. When an outcome lands, pass this prediction_id to record_result so it grades this check-in.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "proceed",
+          "margin": "tight"
+        },
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "compact-guide",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "proceed",
+          "reason": "Contract guide",
+          "margin": "tight",
+          "sub_action": "guide"
+        },
+        "verdict": {
+          "value": "guide",
+          "meaning": "Contract guide"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "guide"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "compact"
+      },
+      "arguments": {
+        "response_mode": "compact"
+      },
+      "expected_action": "guide",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "sub_action": "guide",
+          "verdict": "guide",
+          "reason": "Contract guide",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working; sync_state after your next substantial step. When an outcome lands, pass this prediction_id to record_result so it grades this check-in.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "proceed",
+          "margin": "tight",
+          "sub_action": "guide"
+        },
+        "recovery_hint": "Verdict is advisory rather than a threshold warning - read the guidance text, sync_state after the next substantial step, and use self_recovery(action='review', reflection='...') only if work stalls.",
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "compact-pause",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "pause",
+          "reason": "Contract pause",
+          "margin": "tight"
+        },
+        "verdict": {
+          "value": "pause",
+          "meaning": "Contract pause"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "pause"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "compact"
+      },
+      "arguments": {
+        "response_mode": "compact"
+      },
+      "expected_action": "pause",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "pause",
+          "verdict": "pause",
+          "reason": "Contract pause",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Paused - stop this line of work and do not continue it. Call self_recovery(action='review', reflection='...') to request resumption.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "pause",
+          "margin": "tight"
+        },
+        "recovery_hint": "Working state looks degraded - pause and call self_recovery(action='review', reflection='...') before continuing.",
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "standard-proceed",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "proceed",
+          "reason": "Contract proceed",
+          "margin": "tight"
+        },
+        "verdict": {
+          "value": "proceed",
+          "meaning": "Contract proceed"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "proceed"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "standard"
+      },
+      "arguments": {
+        "response_mode": "standard"
+      },
+      "expected_action": "proceed",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "verdict": "proceed",
+          "reason": "Contract proceed",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working; sync_state after your next substantial step. When an outcome lands, pass this prediction_id to record_result so it grades this check-in.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "proceed",
+          "margin": "tight"
+        },
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "standard-guide",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "proceed",
+          "reason": "Contract guide",
+          "margin": "tight",
+          "sub_action": "guide"
+        },
+        "verdict": {
+          "value": "guide",
+          "meaning": "Contract guide"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "guide"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "standard"
+      },
+      "arguments": {
+        "response_mode": "standard"
+      },
+      "expected_action": "guide",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "sub_action": "guide",
+          "verdict": "guide",
+          "reason": "Contract guide",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working; sync_state after your next substantial step. When an outcome lands, pass this prediction_id to record_result so it grades this check-in.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "proceed",
+          "margin": "tight",
+          "sub_action": "guide"
+        },
+        "recovery_hint": "Verdict is advisory rather than a threshold warning - read the guidance text, sync_state after the next substantial step, and use self_recovery(action='review', reflection='...') only if work stalls.",
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "standard-pause",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "pause",
+          "reason": "Contract pause",
+          "margin": "tight"
+        },
+        "verdict": {
+          "value": "pause",
+          "meaning": "Contract pause"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "pause"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "standard"
+      },
+      "arguments": {
+        "response_mode": "standard"
+      },
+      "expected_action": "pause",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "pause",
+          "verdict": "pause",
+          "reason": "Contract pause",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Paused - stop this line of work and do not continue it. Call self_recovery(action='review', reflection='...') to request resumption.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "pause",
+          "margin": "tight"
+        },
+        "recovery_hint": "Working state looks degraded - pause and call self_recovery(action='review', reflection='...') before continuing.",
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "mirror-proceed",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "proceed",
+          "reason": "Contract proceed",
+          "margin": "tight"
+        },
+        "verdict": {
+          "value": "proceed",
+          "meaning": "Contract proceed"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "proceed"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "mirror"
+      },
+      "arguments": {
+        "response_mode": "mirror"
+      },
+      "expected_action": "proceed",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "verdict": "proceed",
+          "reason": "Contract proceed",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working; sync_state after your next substantial step. When an outcome lands, pass this prediction_id to record_result so it grades this check-in.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "proceed",
+          "margin": "tight"
+        },
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "mirror-guide",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "proceed",
+          "reason": "Contract guide",
+          "margin": "tight",
+          "sub_action": "guide"
+        },
+        "verdict": {
+          "value": "guide",
+          "meaning": "Contract guide"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "guide"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "mirror"
+      },
+      "arguments": {
+        "response_mode": "mirror"
+      },
+      "expected_action": "guide",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "sub_action": "guide",
+          "verdict": "guide",
+          "reason": "Contract guide",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working; sync_state after your next substantial step. When an outcome lands, pass this prediction_id to record_result so it grades this check-in.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "proceed",
+          "margin": "tight",
+          "sub_action": "guide"
+        },
+        "recovery_hint": "Verdict is advisory rather than a threshold warning - read the guidance text, sync_state after the next substantial step, and use self_recovery(action='review', reflection='...') only if work stalls.",
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "mirror-pause",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "pause",
+          "reason": "Contract pause",
+          "margin": "tight"
+        },
+        "verdict": {
+          "value": "pause",
+          "meaning": "Contract pause"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "pause"
+          }
+        },
+        "prediction_id": "contract-prediction",
+        "_mode": "mirror"
+      },
+      "arguments": {
+        "response_mode": "mirror"
+      },
+      "expected_action": "pause",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "pause",
+          "verdict": "pause",
+          "reason": "Contract pause",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Paused - stop this line of work and do not continue it. Call self_recovery(action='review', reflection='...') to request resumption.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "pause",
+          "margin": "tight"
+        },
+        "recovery_hint": "Working state looks degraded - pause and call self_recovery(action='review', reflection='...') before continuing.",
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    },
+    {
+      "name": "full-proceed",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "proceed",
+          "reason": "Contract proceed",
+          "margin": "tight"
+        },
+        "verdict": {
+          "value": "proceed",
+          "meaning": "Contract proceed"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "proceed"
+          }
+        },
+        "prediction_id": "contract-prediction"
+      },
+      "arguments": {
+        "response_mode": "full"
+      },
+      "expected_action": "proceed",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "verdict": "proceed",
+          "reason": "Contract proceed",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working; sync_state after your next substantial step. When an outcome lands, pass this prediction_id to record_result so it grades this check-in.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "proceed",
+          "margin": "tight"
+        },
+        "response_options": {
+          "current": "full",
+          "routine": "compact",
+          "interpreted_summary": "standard",
+          "actionable_diagnostics": "mirror",
+          "complete_audit": "full",
+          "compatibility_aliases": "lite=compact; verbose=full; interpreted=standard; minimal is the legacy bare shape"
+        },
+        "raw_governance": {
+          "success": true,
+          "decision": {
+            "action": "proceed",
+            "reason": "Contract proceed",
+            "margin": "tight"
+          },
+          "verdict": {
+            "value": "proceed",
+            "meaning": "Contract proceed"
+          },
+          "metrics": {
+            "verdict": {
+              "value": "proceed"
+            }
+          },
+          "prediction_id": "contract-prediction"
+        },
+        "_response_size": {
+          "approx_bytes": 979,
+          "approx_kb": 1.0,
+          "size_class": "small",
+          "measured_without_self": true
+        }
+      }
+    },
+    {
+      "name": "full-guide",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "proceed",
+          "reason": "Contract guide",
+          "margin": "tight",
+          "sub_action": "guide"
+        },
+        "verdict": {
+          "value": "guide",
+          "meaning": "Contract guide"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "guide"
+          }
+        },
+        "prediction_id": "contract-prediction"
+      },
+      "arguments": {
+        "response_mode": "full"
+      },
+      "expected_action": "guide",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "sub_action": "guide",
+          "verdict": "guide",
+          "reason": "Contract guide",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working; sync_state after your next substantial step. When an outcome lands, pass this prediction_id to record_result so it grades this check-in.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "proceed",
+          "margin": "tight",
+          "sub_action": "guide"
+        },
+        "response_options": {
+          "current": "full",
+          "routine": "compact",
+          "interpreted_summary": "standard",
+          "actionable_diagnostics": "mirror",
+          "complete_audit": "full",
+          "compatibility_aliases": "lite=compact; verbose=full; interpreted=standard; minimal is the legacy bare shape"
+        },
+        "recovery_hint": "Verdict is advisory rather than a threshold warning - read the guidance text, sync_state after the next substantial step, and use self_recovery(action='review', reflection='...') only if work stalls.",
+        "raw_governance": {
+          "success": true,
+          "decision": {
+            "action": "proceed",
+            "reason": "Contract guide",
+            "margin": "tight",
+            "sub_action": "guide"
+          },
+          "verdict": {
+            "value": "guide",
+            "meaning": "Contract guide"
+          },
+          "metrics": {
+            "verdict": {
+              "value": "guide"
+            }
+          },
+          "prediction_id": "contract-prediction"
+        },
+        "_response_size": {
+          "approx_bytes": 1256,
+          "approx_kb": 1.3,
+          "size_class": "small",
+          "measured_without_self": true
+        }
+      }
+    },
+    {
+      "name": "full-pause",
+      "payload": {
+        "success": true,
+        "decision": {
+          "action": "pause",
+          "reason": "Contract pause",
+          "margin": "tight"
+        },
+        "verdict": {
+          "value": "pause",
+          "meaning": "Contract pause"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "pause"
+          }
+        },
+        "prediction_id": "contract-prediction"
+      },
+      "arguments": {
+        "response_mode": "full"
+      },
+      "expected_action": "pause",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "pause",
+          "verdict": "pause",
+          "reason": "Contract pause",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Paused - stop this line of work and do not continue it. Call self_recovery(action='review', reflection='...') to request resumption.",
+        "prediction_id": "contract-prediction",
+        "state_summary": {
+          "action": "pause",
+          "margin": "tight"
+        },
+        "response_options": {
+          "current": "full",
+          "routine": "compact",
+          "interpreted_summary": "standard",
+          "actionable_diagnostics": "mirror",
+          "complete_audit": "full",
+          "compatibility_aliases": "lite=compact; verbose=full; interpreted=standard; minimal is the legacy bare shape"
+        },
+        "recovery_hint": "Working state looks degraded - pause and call self_recovery(action='review', reflection='...') before continuing.",
+        "raw_governance": {
+          "success": true,
+          "decision": {
+            "action": "pause",
+            "reason": "Contract pause",
+            "margin": "tight"
+          },
+          "verdict": {
+            "value": "pause",
+            "meaning": "Contract pause"
+          },
+          "metrics": {
+            "verdict": {
+              "value": "pause"
+            }
+          },
+          "prediction_id": "contract-prediction"
+        },
+        "_response_size": {
+          "approx_bytes": 1077,
+          "approx_kb": 1.1,
+          "size_class": "small",
+          "measured_without_self": true
+        }
+      }
+    },
+    {
+      "name": "deferred-advisory-pause",
+      "payload": {
+        "success": true,
+        "_mode": "mirror",
+        "decision": {
+          "action": "proceed",
+          "reason": "Cold start deferred",
+          "cold_start_epistemic_deferred": true
+        },
+        "verdict": {
+          "value": "pause",
+          "meaning": "Advisory pause"
+        },
+        "metrics": {
+          "verdict": {
+            "value": "pause"
+          }
+        }
+      },
+      "arguments": {
+        "response_mode": "mirror"
+      },
+      "expected_action": "proceed",
+      "response": {
+        "success": true,
+        "tool": "sync_state",
+        "action_summary": {
+          "action": "proceed",
+          "verdict": "pause",
+          "reason": "Cold start deferred",
+          "verdict_confidence": "unspecified"
+        },
+        "next_action": "Keep working - sync_state again after your next substantial step, and record_result(...) when an outcome lands.",
+        "state_summary": {
+          "action": "proceed"
+        },
+        "recovery_hint": "Verdict is advisory rather than a threshold warning - read the guidance text, sync_state after the next substantial step, and use self_recovery(action='review', reflection='...') only if work stalls.",
+        "raw_governance_hint": "Pass response_mode='full' on the next sync_state for diagnostics."
+      }
+    }
+  ]
+}
