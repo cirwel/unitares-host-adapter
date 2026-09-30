@@ -1,8 +1,12 @@
 # unitares-host-adapter
 
-Connect [UNITARES](https://github.com/cirwel/unitares) to Hermes Agent: record a governance identity for each session and an automatic check-in after each completed turn on a server you run. This repository is both the **Hermes plugin** and the Python library behind it. It also includes a [proxy for OpenAI-compatible clients](#openai-compatible-clients--ollama-open-webui-cursor-governance-proxy).
+Host integrations for [UNITARES](https://github.com/cirwel/unitares), self-hosted accountability infrastructure for long-running AI agents.
 
-The default Hermes plugin observes session activity. It does not inject verdicts into the conversation or block tools. Agent-visible governance and tool gating are separate, opt-in integrations.
+UNITARES connects process identities, claims, evidence, reviews, and outcomes in an operator-owned record that survives restarts, context loss, and handoffs. This package connects **Hermes Agent** and **OpenAI-compatible clients** to that server through lifecycle hooks or a [request proxy](#openai-compatible-clients--ollama-open-webui-cursor-governance-proxy).
+
+The default Hermes plugin creates an identity for each active session and reports completed turns. Selected findings, evidence, reviews, and outcomes require explicit agent calls or additional integration. The server provides those capabilities; installing the adapter does not automatically capture them or reconstruct earlier work.
+
+Start with the [Hermes setup](#hermes-agent) below. For the broader product and evidence behind its claims, see the [UNITARES README](https://github.com/cirwel/unitares#readme) and [evidence and limits](https://github.com/cirwel/unitares/blob/master/docs/EVIDENCE_AND_LIMITS.md).
 
 ## Hermes Agent
 
@@ -43,7 +47,7 @@ For a server on another machine or in another container, `127.0.0.1` refers to t
 
 ### Verify it is working
 
-Start a Hermes conversation and complete one assistant turn. On your UNITARES dashboard, look for a new identity labelled `Hermes Agent` and a check-in with the marker `Hermes assistant turn completed`. The plugin registers session-start and first-turn hooks, so onboarding can happen at session start or lazily on the first turn. Later completed turns use the same governance binding while that Hermes session stays active.
+Start a Hermes conversation and complete one assistant turn. On your UNITARES dashboard, look for a new identity labelled `Hermes Agent` and check-in activity after the completed turn. The plugin registers session-start and first-turn hooks, so onboarding can happen at session start or lazily on the first turn. Later completed turns use the same governance binding while that Hermes session stays active.
 
 Installing this plugin does not add agent-callable tools or a chat command. It reports automatically; a successful install alone does not prove the server is reachable.
 
@@ -160,7 +164,7 @@ plugin:
 
 Add your UNITARES server's MCP endpoint (for example `http://127.0.0.1:8767/mcp/`) to your host's MCP config. No adapter needed for explicit mode; install this package only if you want ambient or gated delivery.
 
-This path is **voluntary** — the agent *may* call governance if it chooses. The proxy below is how you make any OpenAI/MCP client *carry* governance instead.
+Direct MCP access lets the agent publish selected findings and evidence, inspect its working state, request reviews, and record outcomes. The agent decides when to call these tools. Automatic lifecycle reporting requires a host binding or the proxy below.
 
 ### OpenAI-compatible clients — Ollama, Open WebUI, Cursor (governance proxy)
 
@@ -173,7 +177,11 @@ UNITARES_PROXY_UPSTREAM=http://localhost:11434 \
 uhaa-proxy            # listens on http://127.0.0.1:11435  -> point your client at /v1
 ```
 
-Every request through the proxy is governed under one identity, non-optionally — unlike exposing MCP tools and hoping the model calls them. It is **fail-open** (governance errors never break the model) and **non-blocking by default** (`UNITARES_PROXY_MODE=observe`); set `enforce` to gate. This is the substrate-agnostic *floor*: identity + check-ins + observability for any client. True gated tool-call enforcement is the *ceiling*, delivered by the per-host bindings above where the host exposes a pre-tool-call hook (the proxy returns the model's response before the client executes a tool, so it can observe but not intercept execution).
+The proxy uses one UNITARES identity for the proxy process. It reports requests to **`/v1/chat/completions`**; other routes pass through without check-ins. Reports contain the requested model name and message count, rather than conversation text. Multiple clients sharing a proxy also share that identity, so this does not identify each client or agent process separately.
+
+The default `UNITARES_PROXY_MODE=observe` submits a check-in after the response without blocking the model request. In `enforce` mode, the proxy checks policy before forwarding and returns a refusal when the server reports a blocking action. Both modes are **fail-open** on governance errors. The proxy can gate model requests; it cannot intercept tools that the client later executes. Use a host's pre-tool hook for tool-call gating.
+
+These reports make runtime activity visible to the operator. They do not establish task correctness, preserve selected evidence, or record reviews and outcomes automatically.
 
 ## Library delivery modes
 
@@ -195,7 +203,7 @@ These are library capabilities. The default Hermes plugin uses automatic turn re
 | [`SPEC.md`](./SPEC.md) | Host-agnostic delivery-surface specification. |
 | [`tests/`](./tests/) | Core, transport, binding, and plugin contract tests. |
 
-The [UNITARES server](https://github.com/cirwel/unitares) owns identities, state estimation, verdicts, reviews, and shared knowledge. The separate [governance plugin](https://github.com/cirwel/unitares-governance-plugin) packages Claude/Codex hooks, skills, and guidance. This repository supplies host bindings and requires a server for governance operations.
+The [UNITARES server](https://github.com/cirwel/unitares) owns the durable record of identities, claims, evidence, governed reviews, and outcomes, and returns runtime policy actions at checkpoints. The separate [governance plugin](https://github.com/cirwel/unitares-governance-plugin) packages Claude/Codex hooks, skills, and guidance. This repository supplies host bindings and requires a server for governance operations.
 
 ## Status
 
@@ -203,19 +211,16 @@ The [UNITARES server](https://github.com/cirwel/unitares) owns identities, state
 
 Version 0.3.3 reads current UNITARES `sync_state` decision envelopes (`action_summary` and `state_summary`) as well as older canonical verdict responses. Opt-in gates respect the final policy action and typed `AGENT_PAUSED` refusals on later calls; an advisory cold-start pause deferred by policy does not block a tool. Guided decisions remain visible in ambient annotations. Contract fixtures were generated by UNITARES's actual envelope builder at commit [`f5cb44268`](https://github.com/cirwel/unitares/commit/f5cb44268e63247e31ec99ea7dca816e931a8e91), covering minimal, compact, standard, mirror, and full responses. This validates response compatibility; it is not an end-to-end Hermes deployment test.
 
-Bindings are landing in this order:
+Supported integrations:
 
-- [x] Spec draft
-- [x] Core `UnitaresAdapter` class
-- [x] Concrete streamable-HTTP MCP transport
-- [x] Hermes binding: lazy first-turn onboard + turn-level check-in
-- [x] Hermes opt-in gated / ambient / outcome hooks
-- [x] Hermes directory plugin (`hermes plugins install cirwel/unitares-host-adapter`)
-- [x] OpenAI-compatible governance proxy (transport-level binding; any client)
-- [ ] Claude Code binding
-- [ ] Goose binding
-- [ ] Generic MCP fallback
-- [ ] PyPI publish
+| Integration | Available behavior |
+|---|---|
+| Hermes directory plugin | Session identity and automatic turn reporting. |
+| Custom Hermes binding | Opt-in tool gating, annotations, and outcome observations. |
+| OpenAI-compatible proxy | Chat-completion request reporting and optional request gating under one proxy identity. |
+| Direct MCP configuration | Agent-initiated access to server tools, independent of the adapter. |
+
+Claude Code and Codex lifecycle hooks are provided by the separate [governance plugin](https://github.com/cirwel/unitares-governance-plugin). The Python package is installed from GitHub; it is not published on PyPI.
 
 ## License
 
