@@ -76,9 +76,11 @@ Bindings SHOULD also wire these lifecycle events when the host exposes them:
 
 | UNITARES call | Host hook | Purpose |
 |---|---|---|
-| `onboard` | session-start | Mint governance identity for the new agent session |
+| `onboard` or `start_session` | session-start / first turn | Mint governance identity for the new agent session |
 | `outcome_event` | post-tool-call | Feed calibration ground truth |
-| (none — local close) | session-end | Optional final check-in |
+| (none — local close in Hermes 0.3.x) | session finalize / reset | Clear local session binding and failure state |
+
+Hermes 0.3.x defaults to automatic turn reporting: one fresh identity for each active host session and one `sync_state` marker per completed turn. This is host observation, not ambient delivery: the returned verdict is not injected into the conversation. Tool gating, result annotations, and outcome reporting are disabled unless explicitly registered by a custom plugin. Default session close is local only; persisted resume/compaction/subagent lineage and server presence release are not implemented in 0.3.x. See the [Hermes setup guide](./README.md#hermes-agent) for the shipped behavior, disclosure, and hook declarations.
 
 ## Non-goals
 
