@@ -241,6 +241,10 @@ class UnitaresAdapter:
         # Friendly aliases put the final policy decision in action_summary.
         # Its action outranks advisory verdicts, including cold-start pauses
         # deferred by policy. Older servers return canonical payloads instead.
+        # Once paused, the server refuses new check-ins before producing a
+        # decision envelope. This typed policy refusal is not a network error.
+        if raw.get("error_code") == "AGENT_PAUSED":
+            return Verdict(action="pause", message=raw.get("error") or "Agent is paused", raw=raw)
         if raw.get("success") is False or "error" in raw:
             raise ValueError("UNITARES response contains no supported policy action")
         source = raw

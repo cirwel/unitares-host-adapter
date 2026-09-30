@@ -517,3 +517,25 @@ def test_verdict_contract_precedence_and_legacy_fallback(response, expected):
 def test_unrecognized_response_does_not_manufacture_proceed(response):
     with pytest.raises(ValueError, match="policy action"):
         UnitaresAdapter._verdict_from_raw(response)
+
+
+@pytest.mark.asyncio
+async def test_paused_refusal_keeps_later_gates_blocked():
+    # UNITARES updates/phases.py returns this typed error for an already-paused identity.
+    response = {
+        "success": False,
+        "error_code": "AGENT_PAUSED",
+        "error_category": "state_error",
+        "status": "paused",
+        "error": "Agent is paused - check-ins and new shared-memory entries are refused",
+    }
+    adapter = UnitaresAdapter(EnvelopeTransport(response))
+    verdict = await adapter.checkin("still paused")
+    assert verdict.action == "pause"
+    assert verdict.blocks
+    for _ in range(2):
+        gate = await adapter.gate("Read", {})
+        assert gate is not None
+        assert gate.message == response["error"]
+    annotated = await adapter.annotate("Read", {}, "content")
+    assert "pause" in annotated.annotation
