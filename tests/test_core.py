@@ -539,3 +539,121 @@ async def test_paused_refusal_keeps_later_gates_blocked():
         assert gate.message == response["error"]
     annotated = await adapter.annotate("Read", {}, "content")
     assert "pause" in annotated.annotation
+
+
+# --- 0.4.0 continuity: lineage, release_presence, afferents ---------------------
+
+
+class ReleaseTransport(FakeTransport):
+    """FakeTransport that also answers agent / use_tool release calls."""
+
+    def __init__(self, *, release_response: Any = None, raise_on_release: bool = False, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._release_response = release_response if release_response is not None else {"released": True}
+        self._raise_on_release = raise_on_release
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name in ("agent", "use_tool"):
+            self.calls.append((name, arguments))
+            if self._raise_on_release:
+                raise RuntimeError("Invalid value for 'action': 'release_presence'")
+            return self._release_response
+        return await super().call_tool(name, arguments)
+
+
+@pytest.mark.asyncio
+async def test_on_session_start_declares_lineage_only_when_both_fields_given():
+    t = FakeTransport()
+    a = UnitaresAdapter(t)
+    await a.on_session_start("s-1", parent_agent_id="parent-uuid", spawn_reason="compaction")
+    args = t.calls[-1][1]
+    assert args["parent_agent_id"] == "parent-uuid"
+    assert args["spawn_reason"] == "compaction"
+    assert args["force_new"] is True
+    assert a.agent_uuid == "u-1"
+
+    t2 = FakeTransport()
+    b = UnitaresAdapter(t2)
+    await b.on_session_start("s-2", parent_agent_id="parent-uuid")
+    assert "parent_agent_id" not in t2.calls[-1][1]
+    assert "spawn_reason" not in t2.calls[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_release_presence_prefers_direct_agent_tool_and_echoes_proof():
+    t = ReleaseTransport(available_tools={"onboard", "sync_state", "agent"})
+    a = UnitaresAdapter(t)
+    await a.on_session_start("s-1")
+    assert await a.release_presence() is True
+    name, args = t.calls[-1]
+    assert name == "agent"
+    assert args == {"action": "release_presence", "client_session_id": "csid-1"}
+
+
+@pytest.mark.asyncio
+async def test_release_presence_uses_use_tool_gateway_when_agent_is_not_advertised():
+    t = ReleaseTransport(available_tools={"start_session", "sync_state", "use_tool"})
+    a = UnitaresAdapter(t)
+    await a.on_session_start("s-1")
+    assert await a.release_presence() is True
+    name, args = t.calls[-1]
+    assert name == "use_tool"
+    assert args["tool_name"] == "agent"
+    assert args["arguments"] == {"action": "release_presence"}
+    assert args["client_session_id"] == "csid-1"
+
+
+@pytest.mark.asyncio
+async def test_release_presence_on_old_server_is_silent_and_never_retried():
+    t = ReleaseTransport(raise_on_release=True, available_tools={"onboard", "sync_state", "agent"})
+    a = UnitaresAdapter(t)
+    await a.on_session_start("s-1")
+    assert await a.release_presence() is False
+    assert await a.release_presence() is False
+    assert [c[0] for c in t.calls].count("agent") == 1
+
+
+@pytest.mark.asyncio
+async def test_release_presence_without_any_route_or_proof_makes_no_call():
+    t = ReleaseTransport(available_tools={"onboard", "sync_state"})
+    a = UnitaresAdapter(t)
+    assert await a.release_presence() is False  # no proof yet
+    await a.on_session_start("s-1")
+    assert await a.release_presence() is False  # no agent/use_tool advertised
+    assert all(c[0] not in ("agent", "use_tool") for c in t.calls)
+
+
+@pytest.mark.asyncio
+async def test_checkin_sends_only_bounded_numeric_afferents():
+    t = FakeTransport()
+    a = UnitaresAdapter(t)
+    await a.on_session_start("s-1")
+    await a.checkin(
+        "turn",
+        afferents={
+            "turn_tool_calls": 3,
+            "turn_tool_errors": 1,
+            "note": "secret text",
+            "flag": True,
+            "nan": float("nan"),
+            "Bad Key": 1,
+            **{f"k{i}": i for i in range(30)},
+        },
+    )
+    sent_block = t.calls[-1][1]["sensor_data"]["afferents"]
+    assert sent_block["provenance"]["source"] == "host_adapter"
+    sent = sent_block["values"]
+    assert sent["turn_tool_calls"] == 3
+    assert sent["turn_tool_errors"] == 1
+    assert len(sent) <= 16
+    assert "note" not in sent and "flag" not in sent and "nan" not in sent and "Bad Key" not in sent
+    assert all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in sent.values())
+
+
+@pytest.mark.asyncio
+async def test_checkin_without_afferents_sends_no_sensor_data():
+    t = FakeTransport()
+    a = UnitaresAdapter(t)
+    await a.on_session_start("s-1")
+    await a.checkin("turn")
+    assert "sensor_data" not in t.calls[-1][1]

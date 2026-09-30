@@ -10,7 +10,7 @@ Start with the [Hermes setup](#hermes-agent) below. For the broader product and 
 
 ## Hermes Agent
 
-Coming from the [Hermes plugin catalog](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/unitares.yaml)? This is the plugin's setup guide. The catalog installs a reviewed commit, which can be older than this repository's latest version. The steps below apply to the catalog's 0.3.1 plugin and this repository's 0.3.3 release.
+Coming from the [Hermes plugin catalog](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/unitares.yaml)? This is the plugin's setup guide. The catalog installs a reviewed commit, which can be older than this repository's latest version. The steps below apply to the catalog's 0.3.1 plugin and the 0.3.x releases. This branch prepares an unpublished **0.4.0a1** continuity candidate; the additional behavior below is not in the current catalog pin.
 
 ### Install and enable
 
@@ -47,7 +47,7 @@ For a server on another machine or in another container, `127.0.0.1` refers to t
 
 ### Verify it is working
 
-Start a Hermes conversation and complete one assistant turn. On your UNITARES dashboard, look for a new identity labelled `Hermes Agent` and check-in activity after the completed turn. The plugin registers session-start and first-turn hooks, so onboarding can happen at session start or lazily on the first turn. Later completed turns use the same governance binding while that Hermes session stays active.
+Start a Hermes conversation and complete one assistant turn. On your UNITARES dashboard, look for a new identity labelled `Hermes Agent` and check-in activity after the completed turn. In the continuity candidate, onboarding happens at the first-turn hook, after Hermes supplies session lineage. Opening a session without a turn creates no server identity. Later completed turns use the same governance binding while that Hermes session stays active.
 
 Installing this plugin does not add agent-callable tools or a chat command. It reports automatically; a successful install alone does not prove the server is reachable.
 
@@ -56,12 +56,14 @@ Installing this plugin does not add agent-callable tools or a chat command. It r
 | Event | Sent to your configured UNITARES server |
 |---|---|
 | New active session | A fresh identity request with label `Hermes Agent`, model type `hermes-agent`, and a client hint containing the Hermes platform and model name. |
-| Completed assistant turn | The fixed marker `Hermes assistant turn completed`, fixed complexity `0.2`, and metadata identifying the report as a host observation (`substrate_interpretation`). The server-issued session binding accompanies the check-in. |
-| Session finalize or reset | Local adapter state is cleared. In 0.3.x this does not send a server-side close or presence-release call. |
+| Completed assistant turn | The fixed marker `Hermes assistant turn completed`, fixed complexity `0.2`, and metadata identifying the report as a host observation (`substrate_interpretation`). The continuity candidate also sends numeric tool-call counts, tool-error counts, tool time, and turn time in milliseconds. The server-issued session binding accompanies the check-in. |
+| Session finalize or reset | The continuity candidate releases server presence when supported, then clears local state. In 0.3.x close is local only. |
 
-Default hooks send **no user, assistant, or tool text, tool names, arguments, or results**. They do not send per-tool outcomes or turn timing/count metrics. These automatic markers describe host activity; they are not agent-authored reflections or independent evidence that a task succeeded.
+Default hooks send **no user, assistant, or tool text, tool names, arguments, or results**. Per-tool outcomes remain opt-in. The continuity candidate counts tool activity locally and attaches the numbers to the completed-turn check-in; counting a tool call makes no network request. These automatic markers describe host activity; they are not agent-authored reflections or independent evidence that a task succeeded.
 
-Version 0.3.x does not persist a session-to-identity map across process restarts or declare compaction, resume, or subagent lineage. A newly onboarded session receives a fresh identity.
+The continuity candidate persists the last 200 Hermes session-to-UNITARES UUID links in `<HERMES_HOME>/plugin-data/unitares/sessions.json` (UUIDs only, no proof tokens). New child sessions declare `subagent`, `compaction`, or `explicit` lineage when their parent UUID is known. A finalized session resumed in a new process declares an explicit successor. In-place compaction keeps the current binding. Unknown parents create fresh identities without invented lineage. Version 0.3.x has no persisted mapping or lineage declaration.
+
+The candidate remains alpha and unpublished. Before a catalog update, validate one exact revision through clean installation, delegation, resume after finalization, in-place compaction, finalization, and server outage. Earlier soak results from another revision do not establish this candidate's readiness.
 
 Verdicts are recorded on the server, but the default plugin does not show them to the agent or enforce them. Hook failures are fail-open: Hermes continues after a governance error. Hooks run synchronously, so an unresponsive server can still delay a call by roughly 40 seconds (connection plus call timeout). After three consecutive failures, the adapter stops retrying for that session until finalize/reset clears its failure state.
 
@@ -110,11 +112,12 @@ Create a plugin that delegates to the binding. Use this as an alternative to the
 manifest_version: 1
 name: unitares
 kind: standalone
-version: 0.3.3
+version: 0.4.0a1
 description: UNITARES governance lifecycle adapter for Hermes
 provides_hooks:
   - pre_llm_call
   - post_llm_call
+  - post_tool_call
   - on_session_start
   - on_session_finalize
   - on_session_reset
@@ -207,7 +210,7 @@ The [UNITARES server](https://github.com/cirwel/unitares) owns the durable recor
 
 ## Status
 
-**v0.3.3 — alpha.** Signatures may change before 1.0.
+**v0.4.0a1 — unpublished alpha candidate.** Signatures may change before 1.0.
 
 Version 0.3.3 reads current UNITARES `sync_state` decision envelopes (`action_summary` and `state_summary`) as well as older canonical verdict responses. Opt-in gates respect the final policy action and typed `AGENT_PAUSED` refusals on later calls; an advisory cold-start pause deferred by policy does not block a tool. Guided decisions remain visible in ambient annotations. Contract fixtures were generated by UNITARES's actual envelope builder at commit [`f5cb44268`](https://github.com/cirwel/unitares/commit/f5cb44268e63247e31ec99ea7dca816e931a8e91), covering minimal, compact, standard, mirror, and full responses. This validates response compatibility; it is not an end-to-end Hermes deployment test.
 

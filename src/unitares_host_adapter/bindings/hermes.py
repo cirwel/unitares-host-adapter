@@ -30,7 +30,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import tempfile
 import threading
+import time
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from unitares_host_adapter.core import UnitaresAdapter
@@ -44,6 +48,7 @@ _adapters: dict[str, Any] = {}
 
 _HOOK_TIMEOUT_SECONDS = 30.0
 _HOOK_FAILURE_LIMIT = 3
+_LINKS_MAX = 200
 _TURN_PROVENANCE = {
     "harness_type": "hermes_plugin",
     "governance_mode": "automatic_turn_checkin",
@@ -52,6 +57,109 @@ _TURN_PROVENANCE = {
     "verification_source": "hook_observation",
 }
 _LOGGER = logging.getLogger(__name__)
+
+
+class SessionLinks:
+    """Local map of Hermes session id -> the UNITARES agent UUID minted for it.
+
+    Lets a compressed, resumed, or delegated Hermes session declare lineage to
+    the identity its predecessor used. Only UUIDs are stored — never the
+    ``client_session_id`` proof — so the file cannot be used to act as an
+    identity. Bounded to the most recent ``_LINKS_MAX`` sessions, written
+    atomically, and fail-open: a missing, corrupt, or unwritable file just
+    means no lineage is declared.
+    """
+
+    def __init__(self, path: Optional[Path]) -> None:
+        self._path = path
+        self._data: Optional[dict[str, dict[str, Any]]] = None
+        self._lock = threading.Lock()
+
+    def _load(self) -> dict[str, dict[str, Any]]:
+        if self._data is None:
+            data: dict[str, dict[str, Any]] = {}
+            try:
+                if self._path is not None and self._path.is_file():
+                    raw = json.loads(self._path.read_text(encoding="utf-8"))
+                    if isinstance(raw, dict):
+                        data = {
+                            str(k): v
+                            for k, v in raw.items()
+                            if isinstance(v, dict) and isinstance(v.get("agent_uuid"), str)
+                        }
+            except Exception:
+                data = {}
+            self._data = data
+        return self._data
+
+    def get(self, session_id: str) -> Optional[str]:
+        if not session_id:
+            return None
+        with self._lock:
+            entry = self._load().get(session_id)
+        return entry.get("agent_uuid") if entry else None
+
+    def set(self, session_id: str, agent_uuid: Optional[str]) -> None:
+        if not session_id or not agent_uuid:
+            return
+        with self._lock:
+            data = self._load()
+            data[session_id] = {"agent_uuid": agent_uuid, "t": int(time.time())}
+            if len(data) > _LINKS_MAX:
+                keep = sorted(data.items(), key=lambda kv: kv[1].get("t", 0))[-_LINKS_MAX:]
+                data.clear()
+                data.update(keep)
+            if self._path is None:
+                return
+            try:
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                fd, tmp = tempfile.mkstemp(dir=str(self._path.parent), prefix=".links-")
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh)
+                os.replace(tmp, self._path)
+            except Exception:
+                _LOGGER.debug("UNITARES Hermes session links not persisted", exc_info=True)
+
+
+def _default_links_path() -> Optional[Path]:
+    """``<HERMES_HOME>/plugin-data/unitares/sessions.json``; None outside Hermes."""
+    try:
+        from hermes_constants import get_hermes_home
+
+        return Path(get_hermes_home()) / "plugin-data" / "unitares" / "sessions.json"
+    except Exception:
+        return None
+
+
+def _default_session_lookup(session_id: str) -> Optional[dict[str, Any]]:
+    """Return ``{"parent_session_id", "parent_end_reason"}`` from Hermes's session DB.
+
+    Read-only; returns None when Hermes's state module or row is unavailable.
+    """
+    try:
+        from hermes_state import SessionDB
+    except Exception:
+        return None
+    db = None
+    try:
+        db = SessionDB(read_only=True)
+        row = db.get_session(session_id) or {}
+        parent = row.get("parent_session_id") or ""
+        if not parent:
+            return None
+        parent_row = db.get_session(parent) or {}
+        return {
+            "parent_session_id": parent,
+            "parent_end_reason": parent_row.get("end_reason") or "",
+        }
+    except Exception:
+        return None
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 class _PerCallStreamableHTTPTransport:
@@ -200,17 +308,29 @@ def register(
     enable_ambient: bool = False,
     enable_outcomes: bool = False,
     enable_turn_checkin: bool = True,
+    session_links: Optional[SessionLinks] = None,
+    session_lookup: Optional[Callable[[str], Optional[dict[str, Any]]]] = None,
 ) -> Any:
     """Register UNITARES governance hooks with a Hermes plugin context.
 
     Defaults restore the missing automatic behavior without flooding the server:
     one lazy onboard at the first Hermes turn, then one check-in per completed
     assistant turn. Per-tool gate/ambient/outcome modes are available but opt-in.
+
+    Continuity: when a Hermes session descends from another (context
+    compression, resume, delegated subagent), the new identity declares
+    lineage to the predecessor's UNITARES UUID instead of starting unrelated.
+    ``post_tool_call`` only counts locally; the counts ride on the next turn
+    check-in as numeric ``sensor_data.afferents`` (no extra network calls).
     """
     global _adapter, _adapters
     _adapters = {}
     failure_counts: dict[str, int] = {}
     open_circuits: set[str] = set()
+    links = session_links if session_links is not None else SessionLinks(_default_links_path())
+    lookup = session_lookup or _default_session_lookup
+    turn_counts: dict[str, dict[str, float]] = {}
+    turn_started: dict[str, float] = {}
     if adapter is not None:
         def factory() -> Any:
             return adapter
@@ -280,24 +400,99 @@ def register(
         platform = str(kwargs.get("platform") or "hermes")
         model = str(kwargs.get("model") or "unknown-model")
         purpose = f"hermes:{platform}:{model}"
+        parent_uuid, spawn_reason, parent_session = _lineage_for(session_id, platform, kwargs)
+        lineage: dict[str, Any] = {}
+        if parent_uuid and spawn_reason:
+            lineage = {"parent_agent_id": parent_uuid, "spawn_reason": spawn_reason}
         ok, _ = _run_guarded(
             session_id,
             "onboard",
-            lambda: adapter_for_session.on_session_start(session_id, purpose=purpose),
+            lambda: adapter_for_session.on_session_start(session_id, purpose=purpose, **lineage),
         )
-        return adapter_for_session if ok else None
+        if not ok:
+            return None
+        links.set(session_id, getattr(adapter_for_session, "agent_uuid", None))
+        if spawn_reason == "compaction" and parent_session and parent_session in _adapters:
+            # The compressed-away session never gets on_session_finalize, so
+            # retire its in-process adapter here.
+            _retire(parent_session)
+        return adapter_for_session
+
+    def _lineage_for(
+        session_id: str, platform: str, kwargs: dict[str, Any]
+    ) -> tuple[Optional[str], Optional[str], str]:
+        """(parent UUID, spawn_reason, parent Hermes session) for a new identity."""
+        try:
+            info = lookup(session_id) or {}
+        except Exception:
+            info = {}
+        parent_session = str(info.get("parent_session_id") or kwargs.get("parent_session_id") or "")
+        if parent_session and parent_session != session_id:
+            parent_uuid = links.get(parent_session)
+            if not parent_uuid:
+                return None, None, parent_session
+            if platform == "subagent":
+                return parent_uuid, "subagent", parent_session
+            if info.get("parent_end_reason") == "compression":
+                return parent_uuid, "compaction", parent_session
+            return parent_uuid, "explicit", parent_session
+        # Same Hermes session starting a new identity after it was finalized in
+        # this or an earlier process (for example /resume): a successor.
+        own_uuid = links.get(session_id)
+        if own_uuid:
+            return own_uuid, "explicit", session_id
+        return None, None, ""
+
+    def _retire(session_id: str) -> None:
+        """Release presence and drop the adapter for a Hermes session; never raises."""
+        adapter_for_session = _adapters.pop(session_id, None)
+        turn_counts.pop(session_id, None)
+        turn_started.pop(session_id, None)
+        try:
+            if adapter_for_session is not None:
+                release = getattr(adapter_for_session, "release_presence", None)
+                if release is not None:
+                    _run(release())
+                _run(adapter_for_session.on_session_end(session_id))
+        except (Exception, asyncio.CancelledError) as exc:
+            _LOGGER.warning(
+                "UNITARES Hermes session finalization failed (%s); continuing fail-open",
+                type(exc).__name__,
+            )
+        finally:
+            failure_counts.pop(session_id, None)
+            open_circuits.discard(session_id)
 
     def pre_llm_call(**kwargs: Any) -> None:
         _ensure_session(**kwargs)
+        session_id = _session_key(kwargs)
+        if session_id:
+            # After onboarding, so a first turn's wall time excludes the mint.
+            turn_started[session_id] = time.monotonic()
         return None
+
+    def _turn_afferents(session_id: str) -> dict[str, float]:
+        counts = turn_counts.pop(session_id, None) or {}
+        started = turn_started.pop(session_id, None)
+        afferents = {
+            "turn_tool_calls": counts.get("calls", 0),
+            "turn_tool_errors": counts.get("errors", 0),
+            "turn_tool_ms": round(counts.get("ms", 0.0)),
+        }
+        if started is not None:
+            afferents["turn_wall_ms"] = round((time.monotonic() - started) * 1000)
+        return afferents
 
     def post_llm_call(**kwargs: Any) -> None:
         session_id = _session_key(kwargs)
         adapter_for_session = _ensure_session(**kwargs)
         if adapter_for_session is None:
+            turn_counts.pop(session_id, None)
+            turn_started.pop(session_id, None)
             return None
         if not enable_turn_checkin:
             return None
+        afferents = _turn_afferents(session_id)
         _run_guarded(
             session_id,
             "turn_checkin",
@@ -307,6 +502,7 @@ def register(
                 complexity=0.2,
                 epistemic_class="substrate_interpretation",
                 provenance_context=dict(_TURN_PROVENANCE),
+                afferents=afferents,
             ),
         )
         return None
@@ -328,7 +524,24 @@ def register(
             return None
         return directive.as_dict() if directive else None
 
+    def _count_tool(**kwargs: Any) -> None:
+        """Count one finished tool call for this turn; local only, no text kept."""
+        session_id = _session_key(kwargs)
+        if not session_id:
+            return
+        counts = turn_counts.setdefault(session_id, {"calls": 0, "errors": 0, "ms": 0.0})
+        counts["calls"] += 1
+        if not _tool_success(kwargs):
+            counts["errors"] += 1
+        duration = kwargs.get("duration_ms")
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool) and duration >= 0:
+            counts["ms"] += float(duration)
+
     def post_tool_call(**kwargs: Any) -> None:
+        try:
+            _count_tool(**kwargs)
+        except Exception:
+            pass
         if not enable_outcomes:
             return None
         adapter_for_session = _ensure_session(**kwargs)
@@ -371,32 +584,25 @@ def register(
         return annotated.render() if annotated.annotation else result
 
     def on_session_start(**kwargs: Any) -> None:
-        _ensure_session(**kwargs)
+        # Hermes fires this before inserting the session row and omits parent
+        # metadata. Minting here would permanently lose child lineage: later
+        # hooks see an already-bound session and cannot amend its declaration.
+        # pre_llm_call runs after row creation and supplies parent_session_id.
+        # A session opened without a turn therefore creates no server identity.
         return None
 
     def _close_session(**kwargs: Any) -> None:
         session_id = str(kwargs.get("session_id") or "")
         if not session_id:
             return None
-        adapter_for_session = _adapters.pop(session_id, None)
-        try:
-            if adapter_for_session is not None:
-                _run(adapter_for_session.on_session_end(session_id))
-        except (Exception, asyncio.CancelledError) as exc:
-            _LOGGER.warning(
-                "UNITARES Hermes session finalization failed (%s); continuing fail-open",
-                type(exc).__name__,
-            )
-        finally:
-            failure_counts.pop(session_id, None)
-            open_circuits.discard(session_id)
+        _retire(session_id)
         return None
 
     ctx.register_hook("pre_llm_call", pre_llm_call)
     ctx.register_hook("post_llm_call", post_llm_call)
     if enable_gate:
         ctx.register_hook("pre_tool_call", pre_tool_call)
-    if enable_outcomes:
+    if enable_turn_checkin or enable_outcomes:
         ctx.register_hook("post_tool_call", post_tool_call)
     if enable_ambient:
         ctx.register_hook("transform_tool_result", transform_tool_result)
