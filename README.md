@@ -10,16 +10,23 @@ Start with the [Hermes setup](#hermes-agent) below. For the broader product and 
 
 ## Hermes Agent
 
-Coming from the [Hermes plugin catalog](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/unitares.yaml)? This is the plugin's setup guide. The catalog installs a reviewed commit, which can be older than this repository's latest version. The steps below apply to the catalog's 0.3.1 plugin and the 0.3.x releases. This branch prepares an unpublished **0.4.0a1** continuity candidate; the additional behavior below is not in the current catalog pin.
+Coming from the [Hermes plugin catalog](https://hermes-agent.nousresearch.com/docs/plugins/unitares)? Start here. The catalog installs a reviewed commit; a direct repository install can contain newer, unreleased behavior.
+
+| Installation source | Version and behavior |
+|---|---|
+| [Catalog entry](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/unitares.yaml), checked 2026-10-14 | **0.3.3**, pinned to [`bf534cf`](https://github.com/cirwel/unitares-host-adapter/commit/bf534cf031593f785b6022f0edf0fc594c2aa912): session identity and fixed turn reports. |
+| This repository's `master` | **0.4.0a1**, an unpublished continuity candidate: adds lineage links, numeric turn observations, and best-effort presence release. See [candidate behavior](#continuity-candidate-040a1). |
+
+The catalog page renders the README from its pinned commit. Editing this repository's README does not update that page or change what existing catalog installs run.
 
 ### Install and enable
 
 You need **Hermes Agent 0.21.0 or later** and a reachable UNITARES Streamable HTTP MCP server. The plugin does not start a server for you. If you need one, follow the [UNITARES Docker install](https://github.com/cirwel/unitares#install); its default local endpoint is `http://127.0.0.1:8767/mcp/`.
 
-Install from the catalog UI, or install this repository directly:
+Install the reviewed version from the catalog UI or CLI:
 
 ```bash
-hermes plugins install cirwel/unitares-host-adapter
+hermes plugins install unitares
 ```
 
 When prompted, set `UNITARES_MCP_URL` to **your server's** endpoint, including `/mcp/` and its trailing slash. Accept the package dependency installation when Hermes asks; it builds this library and installs `mcp` and `httpx` into the Hermes environment. A separate `pip install` is unnecessary for the directory plugin.
@@ -43,29 +50,45 @@ hermes plugins list
 
 The plugin name is **`unitares`**, even though the repository and Python package are named `unitares-host-adapter`. Restart your Hermes CLI process after enabling it. If you use the gateway, run `hermes gateway restart`.
 
+For deliberate testing of the unpublished candidate, `hermes plugins install cirwel/unitares-host-adapter` installs directly from the repository. This is a different source from the reviewed catalog pin; check the installed version with `hermes plugins list` before comparing behavior.
+
 For a server on another machine or in another container, `127.0.0.1` refers to the machine/container running Hermes. Use an address Hermes can reach and configure the server's allowed hosts and authentication as described in the [MCP client guide](https://github.com/cirwel/unitares/blob/master/docs/integration/MCP_CLIENTS.md).
 
 ### Verify it is working
 
-Start a Hermes conversation and complete one assistant turn. On your UNITARES dashboard, look for a new identity labelled `Hermes Agent` and check-in activity after the completed turn. In the continuity candidate, onboarding happens at the first-turn hook, after Hermes supplies session lineage. Opening a session without a turn creates no server identity. Later completed turns use the same governance binding while that Hermes session stays active.
+Start a Hermes conversation and complete one assistant turn. On your UNITARES dashboard, look for an identity labelled `Hermes Agent` and check-in activity after the completed turn. In catalog version **0.3.3**, onboarding can happen on session start or lazily at the first turn. In **0.4.0a1**, it waits for the first turn so Hermes can supply lineage; merely opening a session creates no server identity. Both versions reuse the binding for later turns while that session remains active in the same process.
 
 Installing this plugin does not add agent-callable tools or a chat command. It reports automatically; a successful install alone does not prove the server is reachable.
 
-### What the default plugin sends
+### What the catalog plugin sends (0.3.3)
 
 | Event | Sent to your configured UNITARES server |
 |---|---|
 | New active session | A fresh identity request with label `Hermes Agent`, model type `hermes-agent`, and a client hint containing the Hermes platform and model name. |
-| Completed assistant turn | The fixed marker `Hermes assistant turn completed`, fixed complexity `0.2`, and metadata identifying the report as a host observation (`substrate_interpretation`). The continuity candidate also sends numeric tool-call counts, tool-error counts, tool time, and turn time in milliseconds. The server-issued session binding accompanies the check-in. |
-| Session finalize or reset | The continuity candidate releases server presence when supported, then clears local state. In 0.3.x close is local only. |
+| Completed assistant turn | The fixed marker `Hermes assistant turn completed`, fixed complexity `0.2`, and metadata identifying the report as a host observation (`substrate_interpretation`). The server-issued session binding accompanies the check-in. |
+| Session finalize or reset | Local adapter state is cleared; this version sends no server-side close or presence-release call. |
 
-Default hooks send **no user, assistant, or tool text, tool names, arguments, or results**. Per-tool outcomes remain opt-in. The continuity candidate counts tool activity locally and attaches the numbers to the completed-turn check-in; counting a tool call makes no network request. These automatic markers describe host activity; they are not agent-authored reflections or independent evidence that a task succeeded.
+Default hooks send **no user, assistant, or tool text, tool names, arguments, or results**. Version 0.3.3 sends no tool counts or duration measurements. Per-tool outcomes remain opt-in. These automatic markers describe host activity; they are not agent-authored reflections or independent evidence that a task succeeded.
 
-The continuity candidate persists the last 200 Hermes session-to-UNITARES UUID links in `<HERMES_HOME>/plugin-data/unitares/sessions.json` (UUIDs only, no proof tokens). New child sessions declare `subagent`, `compaction`, or `explicit` lineage when their parent UUID is known. A finalized session resumed in a new process declares an explicit successor. In-place compaction keeps the current binding. Unknown parents create fresh identities without invented lineage. Version 0.3.x has no persisted mapping or lineage declaration.
+Version 0.3.3 has no persisted session-to-identity mapping or lineage declaration. A new process onboards a fresh identity even if it resumes an earlier Hermes conversation.
+
+### Continuity candidate (0.4.0a1)
+
+The code on `master` adds the following behavior. It is **not included in the current catalog pin**:
+
+- **Deferred onboarding:** `on_session_start` does not mint an identity. The first turn binds the session after Hermes has supplied its parent information.
+- **Lineage:** when a parent UUID is known, new identities declare `subagent`, `compaction`, or `explicit` lineage. A mapped session resumed in a new process becomes an explicit successor. In-place compaction keeps the current binding; unknown parents do not produce invented lineage.
+- **Local continuity hints:** up to 200 Hermes session IDs, their UNITARES UUIDs, and timestamps are retained in `<HERMES_HOME>/plugin-data/unitares/sessions.json`. No `client_session_id` or proof tokens are persisted. This records ancestry; it does not let a new process act as the predecessor.
+- **Numeric observations:** received tool callbacks are counted locally. Turn reports include tool-call and error counts, accumulated tool duration, and elapsed time since the turn-start hook, in milliseconds when available. Counting makes no network call and sends no tool text.
+- **Presence release:** finalize/reset attempts to release server presence when supported, then drops the in-memory binding. The lineage map remains for a later successor.
+
+If the lineage map is missing, unreadable, or its parent entry has been dropped from the bounded history, work continues with a fresh identity. Candidate coverage is exercised in [continuity tests](tests/test_hermes_continuity.py); those tests do not establish a successful live rollout.
 
 The candidate remains alpha and unpublished. Before a catalog update, validate one exact revision through clean installation, delegation, resume after finalization, in-place compaction, finalization, and server outage. Earlier soak results from another revision do not establish this candidate's readiness.
 
-Verdicts are recorded on the server, but the default plugin does not show them to the agent or enforce them. Hook failures are fail-open: Hermes continues after a governance error. Hooks run synchronously, so an unresponsive server can still delay a call by roughly 40 seconds (connection plus call timeout). After three consecutive failures, the adapter stops retrying for that session until finalize/reset clears its failure state.
+### Failures and policy actions
+
+In both versions, verdicts are recorded on the server, but the default plugin does not show them to the agent or enforce them. Hook failures are fail-open: Hermes continues after a governance error. The hooks are synchronous, so a slow or unreachable server can still delay a turn. Transport defaults are 10 seconds for connection and 30 seconds for each tool operation; discovery and onboarding may require multiple operations, so these are not a single deadline for the whole hook. After three consecutive failed guarded operations, the adapter stops retrying for that session until finalize/reset clears its failure state.
 
 ### Troubleshooting
 
@@ -80,6 +103,7 @@ Check `hermes plugins list` and warnings in your active profile's `logs/` direct
 | Authentication failure | Set `UNITARES_BEARER` to a token accepted by your server and restart Hermes. |
 | Hook warnings followed by silence | Three consecutive failures open the session's circuit breaker. Fix the cause, then reset the session or restart Hermes. |
 | Public tool contract incompatibility | The server must advertise `sync_state` and either `onboard` or `start_session`. Check the server version and advertised tool configuration. |
+| No lineage or numeric turn observations | Check the installed version. The reviewed 0.3.3 plugin does not implement the 0.4.0a1 candidate features. |
 
 ### Let the agent call UNITARES tools
 
@@ -99,10 +123,10 @@ This example is for the default local server without authentication. For bearer 
 
 ### Advanced: manual binding and per-tool modes
 
-For a custom Hermes plugin, install the library into the Python environment Hermes uses:
+The example below targets this checkout's **0.4.0a1 candidate**. For a custom Hermes plugin, install this checkout into the Python environment Hermes uses:
 
 ```bash
-pip install "git+https://github.com/cirwel/unitares-host-adapter"
+python3 -m pip install .
 ```
 
 Create a plugin that delegates to the binding. Use this as an alternative to the repository plugin so you do not register duplicate lifecycle hooks:
@@ -141,7 +165,7 @@ Per-tool modes require explicit registration **and matching hook declarations** 
 | `enable_ambient=True` | `transform_tool_result` | Append governance annotations to tool results the agent sees. |
 | `enable_outcomes=True` | `post_tool_call` | Send tool success/failure observations. |
 
-For example, after adding all three hooks to the manifest:
+For example, after ensuring all three hooks are declared in the manifest (`post_tool_call` is already present in the candidate example):
 
 ```python
 register_unitares(ctx, enable_gate=True, enable_ambient=True, enable_outcomes=True)
@@ -151,17 +175,12 @@ The default privacy disclosure above applies to light mode. Per-tool modes send 
 
 ## Other hosts
 
-### Claude Code
+### Claude Code and Codex
 
-There is no `uhaa` installer for Claude Code yet; `uhaa` itself only has
-`--version` and `spec`. Claude Code lifecycle hooks come from the
-[`unitares-governance`](https://github.com/cirwel/unitares-governance-plugin)
-plugin:
-
-```text
-/plugin marketplace add cirwel/unitares-governance-plugin
-/plugin install unitares-governance@unitares-governance
-```
+Use [UNITARES for Claude Code and Codex](https://github.com/cirwel/unitares-governance-plugin#install)
+for those hosts' installation steps, hooks, and skills. This Hermes adapter
+does not install their integrations. Its `uhaa` helper only exposes
+`--version` and `spec`.
 
 ### Any MCP-capable host (explicit-only fallback)
 
@@ -171,10 +190,10 @@ Direct MCP access lets the agent publish selected findings and evidence, inspect
 
 ### OpenAI-compatible clients — Ollama, Open WebUI, Cursor (governance proxy)
 
-For clients that speak the OpenAI API but expose no lifecycle hooks, run the governance proxy in front of the model server and point the client's base URL at it:
+For clients that speak the OpenAI-compatible chat-completions protocol but expose no lifecycle hooks, run the governance proxy in front of the model server and point the client's base URL at it. This example pins the same **0.3.3** source revision as the reviewed Hermes catalog entry:
 
 ```bash
-pip install "unitares-host-adapter[proxy] @ git+https://github.com/cirwel/unitares-host-adapter"
+python3 -m pip install "unitares-host-adapter[proxy] @ git+https://github.com/cirwel/unitares-host-adapter@bf534cf031593f785b6022f0edf0fc594c2aa912"
 UNITARES_MCP_URL=http://127.0.0.1:8767/mcp/ \
 UNITARES_PROXY_UPSTREAM=http://localhost:11434 \
 uhaa-proxy            # listens on http://127.0.0.1:11435  -> point your client at /v1
@@ -183,6 +202,8 @@ uhaa-proxy            # listens on http://127.0.0.1:11435  -> point your client 
 The proxy uses one UNITARES identity for the proxy process. It reports requests to **`/v1/chat/completions`**; other routes pass through without check-ins. Reports contain the requested model name and message count, rather than conversation text. Multiple clients sharing a proxy also share that identity, so this does not identify each client or agent process separately.
 
 The default `UNITARES_PROXY_MODE=observe` submits a check-in after the response without blocking the model request. In `enforce` mode, the proxy checks policy before forwarding and returns a refusal when the server reports a blocking action. Both modes are **fail-open** on governance errors. The proxy can gate model requests; it cannot intercept tools that the client later executes. Use a host's pre-tool hook for tool-call gating.
+
+Set `UNITARES_BEARER` if the governance server requires authentication. The model request, including conversation text, is forwarded to `UNITARES_PROXY_UPSTREAM`; the smaller model-name/message-count summary is what goes to UNITARES. If the proxy cannot onboard at startup, it forwards requests without governance for that process lifetime; restart it after restoring server access.
 
 These reports make runtime activity visible to the operator. They do not establish task correctness, preserve selected evidence, or record reviews and outcomes automatically.
 
