@@ -1,4 +1,4 @@
-# unitares-host-adapter
+# UNITARES for Hermes
 
 Host integrations for [UNITARES](https://github.com/cirwel/unitares), self-hosted accountability infrastructure for long-running AI agents.
 
