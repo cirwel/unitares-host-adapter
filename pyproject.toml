@@ -9,7 +9,7 @@ description = "Host integrations for UNITARES accountability infrastructure: Her
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [
-    { name = "Kenny Wang", email = "hikewa@gmail.com" },
+    { name = "Kenny Wang", email = "founder@cirwel.org" },
 ]
 requires-python = ">=3.11"
 keywords = ["unitares", "governance", "mcp", "agent", "hermes"]
