@@ -1,5 +1,11 @@
 # UNITARES Delivery Surface Spec
 
+**Created:** April 24, 2026
+**Last Updated:** October 30, 2026
+**Status:** Unpublished alpha candidate
+
+---
+
 **Version:** 0.1 (draft)
 **Status:** Pre-release. Signatures may change before 1.0.
 
@@ -83,6 +89,14 @@ Bindings SHOULD also wire these lifecycle events when the host exposes them:
 | `agent` / `use_tool` (when supported) | session finalize / reset in the continuity candidate | Release presence, then clear local session binding and failure state |
 
 Hermes 0.3.x defaults to automatic turn reporting: one fresh identity for each active host session and one `sync_state` marker per completed turn. This is host observation, not ambient delivery: the returned verdict is not injected into the conversation. Tool gating, result annotations, and outcome reporting are disabled unless explicitly registered by a custom plugin. Default session close is local only in 0.3.x. The unpublished 0.4.0a1 candidate adds persisted lineage, optional server presence release, and locally counted numeric turn afferents. It onboards at the first turn after Hermes has supplied parent metadata; in-place compaction retains the identity. See the [Hermes setup guide](./README.md#hermes-agent) for the shipped behavior, disclosure, and hook declarations.
+
+### Attribution and runtime currency
+
+Before minting a Hermes session identity, a nonempty actual model supplied by the hook becomes `model_type`; the harness remains separately labelled `Hermes Agent`. Without a model observation the binding uses the explicit `unknown-model` fallback, not an invented model/provider. Startup hook metadata must survive until first-turn onboarding so lineage is not lost.
+
+Persisted UUID mappings are ancestry hints only. They do not authorize current writes or contribution sign-off; explicit credit requires a verified proof-bearing binding for the contributing episode. Automatic host observations do not establish agent-authored evidence or a signature.
+
+The optional `unitares_host_adapter.hermes_audit` command compares installed Git state with an explicitly trusted upstream and probes fresh-load source resolution under the Hermes interpreter. It is read-only and identity-neutral: drift and unavailable evidence return nonzero, and no update or acknowledgement occurs. It does not inspect already-running interpreter memory or replace a live lifecycle test. Runtime currency and server-guide currency are independent checks. See the [audit and attribution guide](./README.md#check-installed-runtime-drift).
 
 ## Non-goals
 

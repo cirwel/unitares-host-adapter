@@ -1,5 +1,11 @@
 # UNITARES for Hermes
 
+**Created:** April 24, 2026
+**Last Updated:** October 30, 2026
+**Status:** Unpublished alpha candidate
+
+---
+
 Host integrations for [UNITARES](https://github.com/cirwel/unitares), self-hosted accountability infrastructure for long-running AI agents.
 
 UNITARES connects process identities, claims, evidence, reviews, and outcomes in an operator-owned record that survives restarts, context loss, and handoffs. This package connects **Hermes Agent** and **OpenAI-compatible clients** to that server through lifecycle hooks or a [request proxy](#openai-compatible-clients--ollama-open-webui-cursor-governance-proxy).
@@ -77,6 +83,7 @@ Version 0.3.3 has no persisted session-to-identity mapping or lineage declaratio
 The code on `master` adds the following behavior. It is **not included in the current catalog pin**:
 
 - **Deferred onboarding:** `on_session_start` does not mint an identity. The first turn binds the session after Hermes has supplied its parent information.
+- **Actual model attribution:** before onboarding, a nonempty model name supplied by the Hermes hook becomes UNITARES `model_type`. `Hermes Agent` remains the harness label, not the model. Missing model data uses the explicit `unknown-model` fallback; the adapter does not guess a model or provider.
 - **Lineage:** when a parent UUID is known, new identities declare `subagent`, `compaction`, or `explicit` lineage. A mapped session resumed in a new process becomes an explicit successor. In-place compaction keeps the current binding; unknown parents do not produce invented lineage.
 - **Local continuity hints:** up to 200 Hermes session IDs, their UNITARES UUIDs, and timestamps are retained in `<HERMES_HOME>/plugin-data/unitares/sessions.json`. No `client_session_id` or proof tokens are persisted. This records ancestry; it does not let a new process act as the predecessor.
 - **Numeric observations:** received tool callbacks are counted locally. Turn reports include tool-call and error counts, accumulated tool duration, and elapsed time since the turn-start hook, in milliseconds when available. Counting makes no network call and sends no tool text.
@@ -120,6 +127,29 @@ mcp_servers:
 ```
 
 This example is for the default local server without authentication. For bearer headers and remote servers, use the [MCP client guide](https://github.com/cirwel/unitares/blob/master/docs/integration/MCP_CLIENTS.md). Restart Hermes after changing the configuration. Direct MCP access makes tools available; the agent decides when to call them.
+
+### Check installed runtime drift
+
+Connectivity, a version label, and current server guidance do not establish which adapter Hermes loads. To audit this candidate without minting an identity or changing the installation, run:
+
+```bash
+HERMES_PYTHON="$HOME/.hermes/hermes-agent/venv/bin/python"
+PLUGIN_DIR="$HOME/.hermes/plugins/unitares"
+"$HERMES_PYTHON" "$PLUGIN_DIR/src/unitares_host_adapter/hermes_audit.py" \
+  --plugin-dir "$PLUGIN_DIR" --python "$HERMES_PYTHON"
+```
+
+Adjust both paths for your actual installation and active profile. The script is absent from older pins; that absence is not a healthy audit. It emits JSON and exits **0** for verified alignment, **1** for drift, or **2** when evidence is unavailable. It checks a clean installed Git checkout against the canonical upstream `refs/heads/master` and probes package/source resolution under the selected interpreter. For deliberate pinning, select an exact reviewed ref with `--upstream-ref refs/tags/<tag>`; use `--upstream-url` only for an explicitly trusted repository. The installed origin is not authoritative: it can point to a stale local clone.
+
+The import probe preserves the plugin entrypoint's import-first, bundled-`src` fallback order, so a different site-packages installation is reported rather than hidden. This is a **fresh-load source audit**, not inspection of already-running Python memory, server reachability, or lifecycle success. Restart the CLI/gateway after an upgrade and exercise a real turn separately. The audit never updates, acknowledges drift, or writes UNITARES state. Network/Git/runtime failures remain unknown, not green.
+
+For monitoring, schedule this command in your existing watchdog rather than adding another resident. Keep runtime drift independent of server-guide drift; an unavailable server must not suppress runtime warnings. Forward sanitized status/issue codes instead of arbitrary subprocess output, deduplicate unchanged alerts, and require operator review before changing pins or acknowledging guide changes. The package does not install a scheduler automatically.
+
+### Model and UUID contribution credit
+
+Automatic host observations are not an agent signature. Model, provider, harness, and contributing UNITARES UUID are separate fields. Direct MCP access may have a different binding from the lifecycle hook. The UUID in `plugin-data/unitares/sessions.json` is an ancestry hint, not authority to sign or write as that identity.
+
+For intentional contribution credit, first verify the current episode through its proof-bearing MCP binding and read back that exact episode. Then use the repository's contribution policy; an optional explicit trailer convention is `Agent-Model`, `Agent-UUID`, `Agent-Harness`, and `Agent-Provider`. Never infer a provider, claim a missing model, copy a resident/cached UUID, or persist proof tokens. These trailers document provenance; they do not create GitHub account co-authorship or a DCO `Signed-off-by`. This adapter does not automatically sign commits or PRs.
 
 ### Advanced: manual binding and per-tool modes
 
@@ -223,6 +253,7 @@ These are library capabilities. The default Hermes plugin uses automatic turn re
 |---|---|
 | [`plugin.yaml`](./plugin.yaml), [`__init__.py`](./__init__.py) | Installable Hermes directory plugin and runtime entrypoint. |
 | [`src/unitares_host_adapter/bindings/hermes.py`](./src/unitares_host_adapter/bindings/hermes.py) | Hermes lifecycle hooks and opt-in tool modes. |
+| [`src/unitares_host_adapter/hermes_audit.py`](./src/unitares_host_adapter/hermes_audit.py) | Identity-neutral installed Git/source and fresh-import drift audit. |
 | [`src/unitares_host_adapter/bindings/openai_proxy.py`](./src/unitares_host_adapter/bindings/openai_proxy.py) | OpenAI-compatible governance proxy. |
 | [`SPEC.md`](./SPEC.md) | Host-agnostic delivery-surface specification. |
 | [`tests/`](./tests/) | Core, transport, binding, and plugin contract tests. |

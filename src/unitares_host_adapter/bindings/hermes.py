@@ -398,16 +398,30 @@ def register(
         if current == session_id:
             return adapter_for_session
         platform = str(kwargs.get("platform") or "hermes")
-        model = str(kwargs.get("model") or "unknown-model")
+        hook_model = kwargs.get("model")
+        model = (
+            hook_model
+            if isinstance(hook_model, str) and hook_model.strip()
+            else "unknown-model"
+        )
         purpose = f"hermes:{platform}:{model}"
         parent_uuid, spawn_reason, parent_session = _lineage_for(session_id, platform, kwargs)
         lineage: dict[str, Any] = {}
         if parent_uuid and spawn_reason:
             lineage = {"parent_agent_id": parent_uuid, "spawn_reason": spawn_reason}
+
+        def _onboard() -> Any:
+            """Bind the hook-observed model before minting this session's identity."""
+            if isinstance(adapter_for_session, UnitaresAdapter):
+                # The core adapter reads its configured model during onboarding.
+                # Hermes is the harness, not a model; absent evidence stays unknown.
+                adapter_for_session._model_type = model
+            return adapter_for_session.on_session_start(session_id, purpose=purpose, **lineage)
+
         ok, _ = _run_guarded(
             session_id,
             "onboard",
-            lambda: adapter_for_session.on_session_start(session_id, purpose=purpose, **lineage),
+            _onboard,
         )
         if not ok:
             return None
@@ -618,7 +632,7 @@ def _build_default_adapter() -> UnitaresAdapter:
     return UnitaresAdapter(
         _PerCallStreamableHTTPTransport.from_env(),
         agent_label="Hermes Agent",
-        model_type="hermes-agent",
+        model_type="unknown-model",
     )
 
 
@@ -635,5 +649,5 @@ def build_adapter(mcp_url: str, *, bearer: Optional[str] = None) -> UnitaresAdap
     return UnitaresAdapter(
         _PerCallStreamableHTTPTransport(url, bearer=bearer or None),
         agent_label="Hermes Agent",
-        model_type="hermes-agent",
+        model_type="unknown-model",
     )
